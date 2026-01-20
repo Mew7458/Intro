@@ -5099,7 +5099,8 @@ function drawOneSkill(u){
 function drawSkills(u, n){
   let toDraw = Math.max(0, Math.min(n, SKILLPOOL_MAX - u.skillPool.length));
   while(toDraw>0){ const sk=drawOneSkill(u); if(!sk) break; u.skillPool.push(sk); toDraw--; }
-  if(u.skillPool.length > SKILLPOOL_MAX) u.skillPool.length = SKILLPOOL_MAX;
+  const hasOvercap = (u.skillPool || []).some(s=>s && s.meta && s.meta.ignoreSkillCap);
+  if(!hasOvercap && u.skillPool.length > SKILLPOOL_MAX) u.skillPool.length = SKILLPOOL_MAX;
 }
 function ensureStartHand(u){ if(u.dealtStart) return; u.skillPool.length = 0; drawSkills(u, START_HAND_COUNT); u.dealtStart = true; appendLog(`${u.name} 起手手牌：${u.skillPool.map(s=>s.name).join(' / ')}`); }
 
