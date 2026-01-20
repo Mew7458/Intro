@@ -2595,6 +2595,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
         const cloned = cloneSkillWithZeroCost(source._lastUsedSkill);
         source.skillPool = source.skillPool || [];
         source.skillPool.push(cloned);
+        if(source.skillPool.length > SKILLPOOL_MAX) source.skillPool.length = SKILLPOOL_MAX;
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，并复刻「${cloned.name}」(0步)`);
       } else {
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血`);
@@ -4526,7 +4527,7 @@ function ensureNeylaEndShadowGuarantee(u){
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
 function cloneSkillWithZeroCost(sk){
   if(!sk) return null;
-  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false, ignoreSkillCap:true});
+  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false});
   return skill(sk.name, 0, sk.color, sk.desc, sk.rangeFn, sk.execFn, sk.estimate || {}, meta);
 }
 
@@ -6609,8 +6610,6 @@ function checkWin(){
 }
 function showAccomplish(){
   if(!accomplish) return;
-  // Stop Boss BGM on victory
-  stopBossBGM();
   accomplish.classList.remove('hidden');
   if(damageSummary){
     damageSummary.innerHTML='';
@@ -6655,8 +6654,6 @@ function showAccomplish(){
   };
 }
 function showDefeatScreen(){
-  // Stop Boss BGM on defeat
-  stopBossBGM();
   // Show defeat message and return to stage selection
   const defeatMsg = '战斗失败！即将返回关卡界面...';
   appendLog(defeatMsg);
@@ -6752,6 +6749,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   accomplish = document.getElementById('accomplish');
   damageSummary = document.getElementById('damageSummary');
   bossBGM = document.getElementById('bossBGM');
+  if(bossBGM) bossBGM.loop = true;
   // Idle beat FX (tempo-synced)
   try{ tryStartIdleBeatFX(); }catch(e){}
 
@@ -6836,6 +6834,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   fsBtn.title = '切换全屏模式';
   fsBtn.onclick = (e)=>{ e.stopPropagation(); if(interactionLocked) return; toggleFullscreen(); };
   document.body.appendChild(fsBtn);
+  try{ if(!document.fullscreenElement) toggleFullscreen(); }catch(e){}
 
   // ESC 取消 GOD’S WILL
   window.addEventListener('keydown',(e)=>{
