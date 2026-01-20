@@ -2594,13 +2594,15 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     if(haz && haz.hp>0 && haz.side===source.side){
       addStatusStacks(haz,'jixueStacks',1,{label:'鸡血', type:'buff'});
       addStatusStacks(source,'jixueStacks',1,{label:'鸡血', type:'buff'});
+      haz._zeroCostSkills = true;
+      source._zeroCostSkills = true;
       if(source._lastUsedSkill){
         const cloned = cloneSkillWithZeroCost(source._lastUsedSkill);
         source.skillPool = source.skillPool || [];
         source.skillPool.push(cloned);
-        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，并复刻「${cloned.name}」(0步)`);
+        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，本回合技能视为 0 步，并复刻「${cloned.name}」(0步)`);
       } else {
-        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血`);
+        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，本回合技能视为 0 步`);
       }
       hazAssistReady = false;
       hazAssistTargetId = null;
@@ -4528,6 +4530,25 @@ function ensureNeylaEndShadowGuarantee(u){
 
 // —— 技能池/抽牌（含调整：Katz/Nelya/Kyn 技能）；移动卡统一蓝色 —— 
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
+function getSkillCost(u, sk){
+  if(!sk) return 0;
+  if(u && u._zeroCostSkills) return 0;
+  const cost = Number(sk.cost);
+  return Number.isFinite(cost) ? cost : 0;
+}
+function shouldConsumeAllSteps(u, sk){
+  if(u && u._zeroCostSkills) return false;
+  return !!(sk.meta && sk.meta.consumeAllSteps);
+}
+function hasZeroCostSkill(u){
+  if(!u || u.hp<=0) return false;
+  if(u.status && u.status.stunned) return false;
+  const pool = u.skillPool || [];
+  return pool.some(sk => getSkillCost(u, sk) === 0 && !shouldConsumeAllSteps(u, sk));
+}
+function sideHasZeroCostSkill(side){
+  return Object.values(units).some(u => u.side===side && hasZeroCostSkill(u));
+}
 function cloneSkillWithZeroCost(sk){
   if(!sk) return null;
   const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false, ignoreSkillCap:true});
@@ -5589,8 +5610,8 @@ function handleSkillConfirmCell(u, sk, aimCell){
   }
 
   const currentSteps = (u.side==='player')? playerSteps : enemySteps;
-  const consumeAll = !!(sk.meta && sk.meta.consumeAllSteps);
-  const actualCost = consumeAll ? currentSteps : sk.cost;
+  const consumeAll = shouldConsumeAllSteps(u, sk);
+  const actualCost = consumeAll ? currentSteps : getSkillCost(u, sk);
   if(actualCost < 0 || actualCost > currentSteps){ appendLog('步数不足'); clearSkillAiming(); renderAll(); return; }
 
   const aimDir = resolveAimDirForSkill(u, sk, aimCell);
@@ -5706,9 +5727,10 @@ function showSelected(u){
       if(!u.dealtStart) ensureStartHand(u);
       const pool = u.skillPool || [];
       for(const sk of pool){
-        const consumeAll = !!(sk.meta && sk.meta.consumeAllSteps);
-        const stepsOk = consumeAll ? (playerSteps>0) : (playerSteps>=sk.cost);
-        const colorClass = sk.color || ((sk.meta && sk.meta.moveSkill) ? 'blue' : (sk.cost>=3 ? 'red' : 'green'));
+        const consumeAll = shouldConsumeAllSteps(u, sk);
+        const effectiveCost = getSkillCost(u, sk);
+        const stepsOk = consumeAll ? (playerSteps>0) : (playerSteps>=effectiveCost);
+        const colorClass = sk.color || ((sk.meta && sk.meta.moveSkill) ? 'blue' : (effectiveCost>=3 ? 'red' : 'green'));
 
         const card=document.createElement('div');
         card.className='skillCard '+colorClass;
@@ -5723,7 +5745,7 @@ function showSelected(u){
         leftBox.innerHTML = `<strong>${sk.name}</strong><div class="small">${sk.desc||''}</div>`;
 
         const rightBox=document.createElement('div');
-        rightBox.textContent = consumeAll ? '全部' : `${sk.cost} 步`;
+        rightBox.textContent = consumeAll ? '全部' : `${effectiveCost} 步`;
 
         const discardBtn=document.createElement('button');
         discardBtn.textContent='弃置';
@@ -6030,6 +6052,7 @@ function processUnitsTurnEnd(side){
   for(const id in units){
     const u=units[id];
     if(u.side!==side) continue;
+    if(u._zeroCostSkills) u._zeroCostSkills = false;
     if(u.id==='adora' && u.passives.includes('calmAnalysis')){
       if((u.actionsThisTurn||0)===0){
         u.sp = Math.min(u.maxSp, u.sp + 10);
@@ -6267,9 +6290,9 @@ function buildSkillCandidates(en){
   const skillset = (en.skillPool && en.skillPool.length) ? en.skillPool : [];
   const candidates=[];
   for(const sk of skillset){
-    const consumeAll = !!(sk.meta && sk.meta.consumeAllSteps);
-    const actualCost = consumeAll ? enemySteps : sk.cost;
-    if(actualCost<=0 || actualCost>enemySteps) continue;
+    const consumeAll = shouldConsumeAllSteps(en, sk);
+    const actualCost = consumeAll ? enemySteps : getSkillCost(en, sk);
+    if(actualCost<0 || actualCost>enemySteps) continue;
     // 移动类技能（冲刺/瞬移）AI 目前不使用，避免误判
     if((sk.meta && sk.meta.moveSkill) || (sk.estimate && sk.estimate.moveSkill)) continue;
     try{
@@ -6362,8 +6385,8 @@ function buildSkillCandidates(en){
   return candidates;
 }
 async function execEnemySkillCandidate(en, cand){
-  const consumeAll = !!(cand.sk.meta && cand.sk.meta.consumeAllSteps);
-  const actualCost = consumeAll ? enemySteps : cand.sk.cost;
+  const consumeAll = shouldConsumeAllSteps(en, cand.sk);
+  const actualCost = consumeAll ? enemySteps : getSkillCost(en, cand.sk);
   enemySteps = Math.max(0, enemySteps - actualCost);
   updateStepsUI();
 
@@ -6476,7 +6499,7 @@ async function exhaustEnemySteps(){
   armAIWatchdog(token, 20000);
 
   // 主循环：直到步数归零或一方全灭
-  while(currentSide==='enemy' && enemySteps>0){
+  while(currentSide==='enemy' && (enemySteps>0 || sideHasZeroCostSkill('enemy'))){
     if(token !== aiLoopToken) break;
 
     // 快速终止条件
@@ -6489,10 +6512,11 @@ async function exhaustEnemySteps(){
     }
 
     let progressedThisRound = false;
+    const allowZeroCost = sideHasZeroCostSkill('enemy');
 
     // 轮询每个单位各尝试一次“动作”
     for(const en of livingEnemies){
-      if(enemySteps<=0) break;
+      if(enemySteps<=0 && !allowZeroCost) break;
       if(!en || en.hp<=0) continue;
       if(en.status.stunned){ aiLog(en,'眩晕跳过'); continue; }
       if(!en.dealtStart) ensureStartHand(en);
@@ -6535,6 +6559,7 @@ async function exhaustEnemySteps(){
 
     // 整轮无人动作 → 强行消步直到 0（防止卡住）
     if(!progressedThisRound){
+      if(enemySteps<=0) break;
       // 尝试对一个可移动单位强制朝集合点靠拢
       const anyMovable = enemyLivingEnemies().find(e=> canUnitMove(e) && neighborsOf(e, e.r, e.c).some(p=>!getUnitAt(p.r,p.c)));
       if(anyMovable){
@@ -6700,6 +6725,7 @@ function renderAll(){
 function checkEndOfTurn(){
   if(actionInProgress) return;
   if(currentSide==='player' && playerSteps<=0){
+    if(sideHasZeroCostSkill('player')) return;
     appendLog('玩家步数耗尽，轮到敌方');
     processUnitsTurnEnd('player');
     currentSide='enemy';
@@ -6712,6 +6738,7 @@ function checkEndOfTurn(){
     return;
   }
   if(currentSide==='enemy' && enemySteps<=0){
+    if(sideHasZeroCostSkill('enemy')) return;
     appendLog('敌方步数耗尽，轮到玩家');
     finishEnemyTurn();
     return;
