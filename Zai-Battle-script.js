@@ -5591,7 +5591,7 @@ function handleSkillConfirmCell(u, sk, aimCell){
   const currentSteps = (u.side==='player')? playerSteps : enemySteps;
   const consumeAll = !!(sk.meta && sk.meta.consumeAllSteps);
   const actualCost = consumeAll ? currentSteps : sk.cost;
-  if(actualCost <= 0 || actualCost > currentSteps){ appendLog('步数不足'); clearSkillAiming(); renderAll(); return; }
+  if(actualCost < 0 || actualCost > currentSteps){ appendLog('步数不足'); clearSkillAiming(); renderAll(); return; }
 
   const aimDir = resolveAimDirForSkill(u, sk, aimCell);
   const cells = sk.rangeFn(u, aimDir, aimCell) || [];
