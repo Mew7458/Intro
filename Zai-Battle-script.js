@@ -165,6 +165,8 @@ function tryStartIdleBeatFX(){
 let playerStepsEl, enemyStepsEl, roundCountEl, partyStatus, selectedInfo, skillPool, accomplish, damageSummary;
 
 let hazMarkedTargetId = null;
+let hazAssistTargetId = null;
+let hazAssistReady = false;
 let hazTeamCollapsed = false;
 
 let interactionLocked = false;
@@ -267,6 +269,7 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       agileStacks: 0,            // "灵活"Buff 层数（让敌方30%几率miss，miss消耗一层）
       affirmationStacks: 0,      // "肯定"Buff 层数（免疫一次SP伤害，多阶段攻击全阶段免疫，消耗一层）
       afterimageStacks: 0,       // “残影”层数（下次受伤-10%，但受到的攻击+5%）
+      stealth: 0,                // “隐秘”Buff
       painAmpStacks: 0,          // “痛觉放大”层数（每层受到伤害+10%，上限5层）
       tetanusStacks: 0,          // “破伤风”层数（回合开始造成真实伤害）
       tetanusTick: 0,            // 破伤风计数（每3回合衰减1层破伤风）
@@ -291,6 +294,7 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
     _spCrashVuln: false,
     spPendingRestore: null,
     _comeback: false,
+    _lastActionWasSkill: false,
     tutorialTurnCount: 0,      // 用于跟踪"自我激励教程"的回合数
 
     // 姿态系统（Tusk等）
@@ -306,11 +310,11 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
 const units = {};
 // 玩家（七海作战队，满血）
 const playerUnitIds = ['haz', 'tusk', 'katz', 'neyla', 'kyn'];
-units['haz']  = createUnit('haz','Haz','player',55, 4,21, 750,100, 1.0,0, ['hazObsess','hazHatred','hazOrders','hazWorth','hazCritWindow','hazHunt'], {team:'seven', stunThreshold:4, pullImmune:true});
-units['katz'] = createUnit('katz','Katz','player',53, 3,19, 500,75, 1.0,0, ['katzHidden','katzExecution','katzStrong'], {team:'seven', stunThreshold:3, pullImmune:true});
-units['tusk'] = createUnit('tusk','Tusk','player',54, 6,19, 1000,60, 1.0,0, ['tuskGuard','tuskWall','tuskBull'], {team:'seven', size:2, stunThreshold:3, pullImmune:true});
-units['neyla']= createUnit('neyla','Neyla','player',52, 2,15, 350,80, 1.0,0, ['neylaAim','neylaCold','neylaReload'], {team:'seven', stunThreshold:2});
-units['kyn']  = createUnit('kyn','Kyn','player',51, 7,15, 250,70, 1.0,0, ['kynReturn','kynExecute','kynSwift'], {team:'seven', stunThreshold:2});
+units['haz']  = createUnit('haz','Haz','player',70, 4,21, 1050,100, 1.0,0, ['hazObsess','hazHatred','hazOrders','hazWorth','hazCritWindow','hazHunt'], {team:'seven', stunThreshold:4, pullImmune:true});
+units['katz'] = createUnit('katz','Katz','player',53, 3,19, 550,120, 0.625,0, ['katzHidden','katzExecution','katzStrong'], {team:'seven', stunThreshold:3, pullImmune:true});
+units['tusk'] = createUnit('tusk','Tusk','player',54, 6,19, 1000,80, 0.75,0, ['tuskGuard','tuskWall','tuskBull'], {team:'seven', size:2, stunThreshold:3, pullImmune:true});
+units['neyla']= createUnit('neyla','Neyla','player',52, 2,15, 450,100, 0.8,0, ['neylaAim','neylaCold','neylaReload'], {team:'seven', stunThreshold:2});
+units['kyn']  = createUnit('kyn','Kyn','player',51, 7,15, 350,90, 0.7778,0, ['kynReturn','kynExecute','kynSwift'], {team:'seven', stunThreshold:2});
 // 敌人（宰）
 units['zai'] = createUnit('zai','宰','enemy',175, 17, 2, 2300,150, 1.0,20, [], {stunThreshold:4, pullImmune:true});
 units['zai'].zaiForm = 'dagger';
@@ -2304,7 +2308,17 @@ function calcOutgoingDamage(attacker, baseDmg, target, skillName){
   if(attacker.id==='adora' && skillName==='短匕轻挥' && target){ dmg = Math.round(dmg * backstabMultiplier(attacker,target)); }
   if(attacker.team==='seven'){ dmg = Math.max(0, dmg - 5); }
   if(attacker.id==='haz' && attacker.hp <= attacker.maxHp/2){ dmg = Math.round(dmg * 1.3); }
+  if(attacker.id==='haz' && attacker._tuskBoostTurns>0){ dmg = Math.round(dmg * 1.15); }
   if(attacker.id==='haz' && attacker._comeback) dmg = Math.round(dmg * 1.10);
+  if(attacker.id==='katz'){
+    const haz = units['haz'];
+    if(haz && haz.hp>0 && haz.side===attacker.side){ dmg = Math.round(dmg * 1.20); }
+    if(attacker.sp > 60){ dmg = Math.round(dmg * 1.10); }
+  }
+  if(attacker.id==='neyla'){
+    if(!attacker._movedThisTurn){ dmg = Math.round(dmg * 1.5); }
+    if(target && target.hp <= target.maxHp/2){ dmg = Math.round(dmg * 2); }
+  }
 
   if(hasDeepBreathPassive(attacker)){
     dmg = Math.round(dmg * 1.10);
@@ -2392,6 +2406,12 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
       return;
     }
   }
+  if(source && source.id==='kyn' && u.hp > 0 && u.hp <= u.maxHp * 0.25){
+    appendLog(`${source.name} 无情暗杀：${u.name} 血量过低，直接斩杀！`);
+    trueDamage = true;
+    hpDmg = u.hp;
+    spDmg = 0;
+  }
   // 力挽狂澜减伤
   if(u.id==='haz' && u._comeback && !trueDamage){
     hpDmg = Math.round(hpDmg * 0.9);
@@ -2424,8 +2444,12 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   }
 
   if(!trueDamage && u.id==='haz' && u.chainShieldTurns>0){
-    hpDmg = Math.round(hpDmg * 0.6);
-    spDmg = Math.round(spDmg * 0.6);
+    hpDmg = Math.round(hpDmg * 0.5);
+    spDmg = Math.round(spDmg * 0.5);
+  }
+  if(!trueDamage && u.id==='tusk' && u._roarShieldTurns>0){
+    hpDmg = Math.round(hpDmg * 0.8);
+    spDmg = Math.round(spDmg * 0.8);
   }
   if(!trueDamage && u.passives.includes('toughBody') && !opts.ignoreToughBody){
     hpDmg = Math.round(hpDmg * 0.75);
@@ -2532,6 +2556,54 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     handleUnitDeath(u, source);
   }
 
+  if(source && (finalHp>0 || finalSp>0)){
+    source._didAttackThisTurn = true;
+    if(source.id==='katz'){
+      source._hitsThisTurn = (source._hitsThisTurn||0) + 1;
+    }
+  }
+  if(finalHp>0 || finalSp>0){
+    u._tookDamageThisTurn = true;
+  }
+
+  if(source && source.id==='haz' && u.side!==source.side && Math.random() < 0.40){
+    const reduced = applySpDamage(u, 5, {sourceId: source.id});
+    appendLog(`${u.name} SP -${reduced}（恐惧）`);
+    addStatusStacks(u,'paralyzed',1,{label:'恐惧', type:'debuff'});
+    appendLog(`${u.name} 下回合 -1 步`);
+    showSkillFx('haz:怨念滋生·恐惧',{target:u});
+  }
+  if(source && source.id==='haz' && u.side!==source.side){
+    hazAssistTargetId = u.id;
+    hazAssistReady = true;
+  }
+
+  if(source && source.id==='katz' && source._hitsThisTurn>=2 && !source._execTriggeredThisTurn && u.hp>0){
+    source._execTriggeredThisTurn = true;
+    const extraBase = Math.round(20 * 1.3);
+    const extraDmg = calcOutgoingDamage(source, extraBase, u, '恐怖执行力');
+    damageUnit(u.id, extraDmg, 0, `${source.name} 恐怖执行力 追加矛刺 ${u.name}`, source.id, {skillFx:'katz:矛刺'});
+    source.dmgDone += extraDmg;
+  }
+
+  if(source && source.id!=='haz' && hazAssistReady && hazAssistTargetId === u.id){
+    const haz = units['haz'];
+    if(haz && haz.hp>0 && haz.side===source.side){
+      addStatusStacks(haz,'jixueStacks',1,{label:'鸡血', type:'buff'});
+      addStatusStacks(source,'jixueStacks',1,{label:'鸡血', type:'buff'});
+      if(source._lastUsedSkill){
+        const cloned = cloneSkillWithZeroCost(source._lastUsedSkill);
+        source.skillPool = source.skillPool || [];
+        source.skillPool.push(cloned);
+        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，并复刻「${cloned.name}」(0步)`);
+      } else {
+        appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血`);
+      }
+      hazAssistReady = false;
+      hazAssistTargetId = null;
+    }
+  }
+
   // 锁链缠绕 反击（Haz）
   if(sourceId){
     const src = units[sourceId];
@@ -2616,6 +2688,13 @@ function handleUnitDeath(u, source){
         });
       }
     }
+  }
+  if(hazAssistTargetId === u.id){
+    hazAssistTargetId = null;
+    hazAssistReady = false;
+  }
+  if(source && source.id === 'kyn' && source.passives.includes('kynReturn')){
+    source._returnToHazNextTurn = true;
   }
 }
 
@@ -3034,6 +3113,12 @@ function unitActed(u){
     u._dependTarget = null; // Clear the target reference
   }
 
+  if(u.id==='haz' && u._comeback && u._lastActionWasSkill && Math.random() < 0.75){
+    addStatusStacks(u,'jixueStacks',1,{label:'鸡血', type:'buff'});
+    appendLog(`${u.name} 力挽狂澜：获得 1 层鸡血`);
+  }
+  if(u._lastActionWasSkill){ u._lastActionWasSkill = false; }
+
   if(requireFullRender){
     renderAll();
   } else if(statusNeedsRefresh){
@@ -3075,12 +3160,12 @@ function karmaPunch(u,target){
 async function katz_RepeatedWhip(u, desc){
   // 反复鞭尸（三步）
   // 鱼矛成鞭，挥舞前面3格所有敌方单位：10伤害后再15伤害，并恢复5SP；
-  // 按自身SP百分比重复该两段攻击（floor(sp/maxSp*5) 次，1..5），最多5次
+  // 按自身SP百分比重复该两段攻击（floor(sp/maxSp*6) 次，1..6），最多6次
   const dir = (desc && desc.dir) ? desc.dir : u.facing;
-  const cells = range_forward_n(u,3,dir);
+  const cells = range_forward_n(u,4,dir);
   if(!cells.length){ appendLog('反复鞭尸：前路受阻'); unitActed(u); return; }
 
-  const cycles = Math.max(1, Math.min(5, Math.floor((u.sp / Math.max(1,u.maxSp)) * 5)));
+  const cycles = Math.max(1, Math.min(6, Math.floor((u.sp / Math.max(1,u.maxSp)) * 6)));
   let totalHits = 0;
   for(let cycle=1; cycle<=cycles; cycle++){
     await telegraphThenImpact(cells);
@@ -3250,7 +3335,7 @@ async function haz_GodFork(u, target){
 }
 function haz_ChainShield(u){
   u.chainShieldTurns = 2; u.chainShieldRetaliate = 1;
-  appendLog(`${u.name} 锁链缠绕：2回合内伤害-40%，下次被打反击 10SP`);
+  appendLog(`${u.name} 锁链缠绕：2回合内伤害-50%，下次被打反击 10SP`);
   showSkillFx('haz:锁链缠绕',{target:u});
   for(const id in units){
     const v=units[id];
@@ -3373,7 +3458,7 @@ async function katz_MustErase(u, desc){
   const dir = desc && desc.dir ? desc.dir : u.facing;
   const cells = range_forward_n(u,3,dir);
   await telegraphThenImpact(cells);
-  const cycleTimes = Math.max(1, Math.min(5, Math.floor((u.sp/u.maxSp)*5)));
+  const cycleTimes = Math.max(1, Math.min(6, Math.floor((u.sp/u.maxSp)*6)));
   for(let cycle=1; cycle<=cycleTimes; cycle++){
     const dmg = cycle===1?20:30;
     let set=new Set(), hits=0;
@@ -3419,6 +3504,8 @@ async function tusk_DeepRoar(u){
     }
   }
   showSkillFx('tusk:来自深海的咆哮',{target:u});
+  u._roarShieldTurns = 2;
+  appendLog(`${u.name} 咆哮防护：受到的伤害额外降低20%（2回合）`);
   appendLog(`来自深海的咆哮 命中 ${hits} 人`);
   unitActed(u);
 }
@@ -3436,15 +3523,33 @@ function clearStance(u){
   }
   u._stanceType=null; u._stanceTurns=0; u._stanceDmgRed=0; u._stanceSpPerTurn=0; u._reflectPct=0;
 }
+function grantHazBoost(turns){
+  const haz = units['haz'];
+  if(!haz || haz.hp<=0) return;
+  haz._tuskBoostTurns = Math.max(haz._tuskBoostTurns||0, turns);
+  appendLog(`Haz 获得鼓舞：伤害提高15%（${haz._tuskBoostTurns}回合）`);
+}
 function tusk_WarFortress(u){
   // 防御姿态：减伤50%，每回合+10SP，3回合；期间无法移动
   enterStance(u, 'defense', 3, {dmgReduction:0.5, spPerTurn:10});
   showSkillFx('tusk:战争堡垒',{target:u});
+  grantHazBoost(3);
   unitActed(u);
 }
 function tusk_RetaliateGuard(u){
-  // 反伤姿态：减伤40%，每回合+10SP，反弹30%所受HP伤害，3回合；期间无法移动
-  enterStance(u, 'retaliate', 3, {dmgReduction:0.4, spPerTurn:10, reflectPct:0.3});
+  // 反伤姿态：减伤25%，每回合+10SP，反弹25%所受HP伤害，3回合；期间无法移动
+  enterStance(u, 'retaliate', 3, {dmgReduction:0.25, spPerTurn:10, reflectPct:0.25});
+  grantHazBoost(3);
+  const haz = units['haz'];
+  if(haz && haz.hp>0){
+    const heal = Math.max(1, Math.floor(haz.maxHp * 0.15));
+    const spBefore = haz.sp;
+    haz.hp = Math.min(haz.maxHp, haz.hp + heal);
+    haz.sp = Math.min(haz.maxSp, haz.sp + 15);
+    syncSpBroken(haz);
+    showGainFloat(haz, heal, haz.sp - spBefore);
+    appendLog(`拼尽全力保卫队长：Haz 恢复 ${heal} HP 与 15 SP`);
+  }
   showSkillFx('tusk:拼尽全力保卫队长',{target:u});
   unitActed(u);
 }
@@ -3464,9 +3569,10 @@ async function tusk_BullCharge(u, desc){
   }
   if(hitTarget){
     if(lastFree){ showTrail(u.r,u.c,lastFree.r,lastFree.c); u.r=lastFree.r; u.c=lastFree.c; pulseCell(u.r,u.c); }
-    const dmg = calcOutgoingDamage(u,20,hitTarget,'牛鲨冲撞');
+    const dmg = calcOutgoingDamage(u,25,hitTarget,'牛鲨冲撞');
     cameraFocusOnCell(hitTarget.r, hitTarget.c);
     damageUnit(hitTarget.id, dmg, 0, `${u.name} 牛鲨冲撞 命中并撞击 ${hitTarget.name}`, u.id,{skillFx:'tusk:牛鲨冲撞'});
+    applyStunOrStack(hitTarget, 1, {bypass:true, reason:'牛鲨冲撞'});
     const knockDir = cardinalDirFromDelta(hitTarget.r - u.r, hitTarget.c - u.c);
     const back = forwardCellAt(hitTarget, knockDir, 1);
     if(back && !getUnitAt(back.r, back.c)){ hitTarget.r=back.r; hitTarget.c=back.c; pulseCell(back.r, back.c); appendLog(`${hitTarget.name} 被撞退一格`); }
@@ -3491,10 +3597,7 @@ async function neyla_SwiftShot(u, targetOrAim){
   const dist = mdist(u, tu);
   if(dist > 6){ appendLog(`${u.name} 迅捷射击 失败：目标超出射程（≤6）`); unitActed(u); return; }
   await telegraphThenImpact([{r:tu.r,c:tu.c}]);
-  let base=15;
-  if((u.actionsThisTurn||0)===0) base = Math.round(base*1.5);
-  if(tu.hp <= tu.maxHp/2) base = base*2;
-  const dmg = calcOutgoingDamage(u,base,tu,'迅捷射击');
+  const dmg = calcOutgoingDamage(u,15,tu,'迅捷射击');
   cameraFocusOnCell(tu.r, tu.c);
   damageUnit(tu.id, dmg, 5, `${u.name} 迅捷射击 命中 ${tu.name}`, u.id,{skillFx:'neyla:迅捷射击'});
   unitActed(u);
@@ -3526,7 +3629,7 @@ async function neyla_EndShadow(u, aim){
   appendLog(`${u.name} 使用终末之影：自身下回合 -1 步`);
   unitActed(u);
 }
-// Neyla：双钩牵制（2步，红，前3格内优先最近，单体）
+// Neyla：双钩牵制（2步，红，前4格内优先最近，单体）
 async function neyla_DoubleHook(u, desc){
   const dir = (desc && desc.dir) ? desc.dir : u.facing;
   const cells = range_forward_n(u,3,dir);
@@ -3542,8 +3645,8 @@ async function neyla_DoubleHook(u, desc){
     target.r = stepCell.r; target.c = stepCell.c; pulseCell(target.r,target.c);
     appendLog(`${target.name} 被双钩拉近一格`);
   }
-  addStatusStacks(target,'paralyzed',1,{label:'恐惧', type:'debuff'});
-  appendLog(`${target.name} 因双钩牵制：下回合 -1 步`);
+  addStatusStacks(target,'paralyzed',2,{label:'恐惧', type:'debuff'});
+  appendLog(`${target.name} 因双钩牵制：下回合 -2 步`);
   const dmg = calcOutgoingDamage(u,15,target,'双钩牵制');
   damageUnit(target.id, dmg, 0, `${u.name} 双钩牵制 命中 ${target.name}`, u.id,{skillFx:'neyla:双钩牵制'});
   showSkillFx('neyla:双钩牵制',{target:target});
@@ -4216,6 +4319,7 @@ function zaiApplyBitePenalty(zai){
   renderAll();
 }
 async function zai_BrutalBite(zai){
+  zai._biteUsedThisTurn = true;
   const target = _zaiChooseBiteTarget(zai);
   if(!target){
     appendLog('暴戾撕咬：附近没有可撕咬目标');
@@ -4270,6 +4374,14 @@ async function zai_BrutalBite(zai){
   }
 
   unitActed(zai);
+}
+function makeZaiBiteSkill(u){
+  return skill('暴戾撕咬',1,'purple','花费所有剩余步数：以自身为中心3x3撕咬一名敌方单位，100真实伤害，清空其SP并叠5层流血。击杀则自身恢复7%最大生命值并获得5层鸡血。若本回合未咬到任何单位则反噬。满血目标会躲避。',
+    (uu)=> range_square_n(uu,1),
+    (uu)=> zai_BrutalBite(uu),
+    {aoe:false},
+    {castMs:900, consumeAllSteps:true}
+  );
 }
 
 // —— Kyn ——  
@@ -4364,6 +4476,22 @@ async function kyn_ShadowDance_AOE(u){
   }
   unitActed(u);
 }
+function kyn_PrepareMove(u, payload){
+  const dest = payload && payload.moveTo;
+  if(!dest){ appendLog('准备。。 无效的目的地'); return; }
+  cameraFocusOnCell(dest.r, dest.c); showTrail(u.r,u.c,dest.r,dest.c);
+  if(dest.r !== u.r || dest.c !== u.c){
+    const dir = cardinalDirFromDelta(dest.r - u.r, dest.c - u.c);
+    setUnitFacing(u, dir);
+  }
+  u.r = dest.r; u.c = dest.c; pulseCell(u.r,u.c);
+  const beforeSp = u.sp;
+  u.sp = Math.min(u.maxSp, u.sp + 5);
+  syncSpBroken(u);
+  showGainFloat(u, 0, u.sp - beforeSp);
+  appendLog(`${u.name} 准备。。：移动并恢复 5 SP`);
+  unitActed(u);
+}
 
 // —— Neyla 压迫后“终末之影”保证（每回合最多一张；无则添加/替换） ——
 function makeNeylaEndShadowSkill(u){
@@ -4396,6 +4524,11 @@ function ensureNeylaEndShadowGuarantee(u){
 
 // —— 技能池/抽牌（含调整：Katz/Nelya/Kyn 技能）；移动卡统一蓝色 —— 
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
+function cloneSkillWithZeroCost(sk){
+  if(!sk) return null;
+  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false, ignoreSkillCap:true});
+  return skill(sk.name, 0, sk.color, sk.desc, sk.rangeFn, sk.execFn, sk.estimate || {}, meta);
+}
 
 // Helper function to load selected skills from localStorage
 function loadSelectedSkillsForBattle() {
@@ -4654,12 +4787,7 @@ function buildSkillFactoriesForUnit(u){
   } else if(u.id==='zai'){
     if(u._forceBiteThisTurn){
       F.push(
-        { key:'暴戾撕咬', prob:1.0, cond:()=>true, make:()=> skill('暴戾撕咬',1,'purple','花费所有剩余步数：以自身为中心3x3撕咬一名敌方单位，100真实伤害，清空其SP并叠5层流血。击杀则自身恢复7%最大生命值并获得5层鸡血。若本回合未咬到任何单位则反噬。满血目标会躲避。',
-          (uu)=> range_square_n(uu,1),
-          (uu)=> zai_BrutalBite(uu),
-          {aoe:false},
-          {castMs:900, consumeAllSteps:true}
-        )}
+        { key:'暴戾撕咬', prob:1.0, cond:()=>true, make:()=> makeZaiBiteSkill(u) }
       );
       return F;
     }
@@ -4750,7 +4878,7 @@ function buildSkillFactoriesForUnit(u){
           {},
           {cellTargeting:true, castMs:1200}
         )},
-        { key:'锁链缠绕', prob:0.50, cond:()=>true, make:()=> skill('锁链缠绕',2,'green','2回合内伤害-40%，下次被打反击10SP，队伍+5SP',
+        { key:'锁链缠绕', prob:0.50, cond:()=>true, make:()=> skill('锁链缠绕',2,'green','2回合内伤害-50%，下次被打反击10SP，队伍+5SP',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
           (uu)=> haz_ChainShield(uu),
           {},
@@ -4794,19 +4922,19 @@ function buildSkillFactoriesForUnit(u){
   } else if(u.id==='katz'){
     if(!u.oppression){
       F.push(
-        { key:'矛刺', prob:0.60, cond:()=>true, make:()=> skill('矛刺',1,'green','前方1格 20伤 自身+5SP',
+        { key:'矛刺', prob:0.70, cond:()=>true, make:()=> skill('矛刺',1,'green','前方1格 20伤 自身+5SP',
           (uu,aimDir)=> aimDir? range_forward_n(uu,1,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,1,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=>{ let tgt=null, dir=uu.facing; if(desc && desc.dir){ dir=desc.dir; const c=forwardCellAt(uu,dir,1); if(c) tgt=getUnitAt(c.r,c.c); } if(tgt) katz_Thrust(uu,tgt); else appendLog('矛刺 未命中'); },
           {},
           {castMs:1000}
         )},
-        { key:'链式鞭击', prob:0.50, cond:()=>true, make:()=> skill('链式鞭击',2,'red','前方3格逐格 25伤 使下回合-1步',
+        { key:'链式鞭击', prob:0.60, cond:()=>true, make:()=> skill('链式鞭击',2,'red','前方3格逐格 25伤 使下回合-1步',
           (uu,aimDir)=> aimDir? range_forward_n(uu,3,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,3,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> katz_ChainWhip(uu,desc),
           {},
           {castMs:1200}
         )},
-        { key:'反复鞭尸', prob:0.50, cond:()=>true, make:()=> skill('反复鞭尸',3,'red','前方3格AOE：每轮10/15HP并+5SP，按SP百分比重复（最多5次）',
+        { key:'反复鞭尸', prob:0.50, cond:()=>true, make:()=> skill('反复鞭尸',3,'red','前方3格AOE：每轮10/15HP并+5SP，按SP百分比重复（最多6次）',
           (uu,aimDir)=> aimDir? range_forward_n(uu,3,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,3,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> katz_RepeatedWhip(uu,desc),
           {},
@@ -4821,7 +4949,7 @@ function buildSkillFactoriesForUnit(u){
       );
     } else {
       F.push(
-        { key:'必须抹杀一切。。', prob:0.55, cond:()=>true, make:()=> skill('必须抹杀一切。。',2,'red','前方3格多段：20/30伤（自损5HP/段），每段+5SP（最多5段）',
+        { key:'必须抹杀一切。。', prob:0.55, cond:()=>true, make:()=> skill('必须抹杀一切。。',2,'red','前方3格多段：20/30伤（自损5HP/段），每段+5SP（最多6段）',
           (uu,aimDir)=> aimDir? range_forward_n(uu,3,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,3,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> katz_MustErase(uu,desc),
           {aoe:true},
@@ -4838,19 +4966,19 @@ function buildSkillFactoriesForUnit(u){
           {},
           {castMs:1000}
         )},
-        { key:'来自深海的咆哮', prob:0.50, cond:()=>true, make:()=> skill('来自深海的咆哮',2,'red','3x3范围 敌方SP -20',
+        { key:'来自深海的咆哮', prob:0.60, cond:()=>true, make:()=> skill('来自深海的咆哮',2,'red','3x3范围 敌方SP -20，自身伤害额外降低20%（2回合）',
           (uu)=> range_square_n(uu,1),
           (uu)=> tusk_DeepRoar(uu),
           {aoe:true},
           {castMs:1200}
         )},
-        { key:'战争堡垒', prob:0.45, cond:()=>true, make:()=> skill('战争堡垒',2,'red','进入防御姿态：3回合内伤害-50%且每回合+10SP（期间无法移动）',
+        { key:'战争堡垒', prob:0.30, cond:()=>true, make:()=> skill('战争堡垒',2,'red','进入防御姿态：3回合内伤害-50%且每回合+10SP（期间无法移动），Haz 伤害+15%',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
           (uu)=> tusk_WarFortress(uu),
           {},
           {castMs:700}
         )},
-        { key:'牛鲨冲撞', prob:0.45, cond:()=>true, make:()=> skill('牛鲨冲撞',2,'blue','向一方向冲锋≤3格，撞击第一个敌人造成20伤并击退1格；否则移动到终点',
+        { key:'牛鲨冲撞', prob:0.50, cond:()=>true, make:()=> skill('牛鲨冲撞',2,'blue','向一方向冲锋≤3格，撞击第一个敌人造成25伤并晕眩1回合；否则移动到终点',
           (uu,aimDir)=> aimDir? range_forward_n(uu,3,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,3,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> tusk_BullCharge(uu,desc),
           {},
@@ -4859,7 +4987,7 @@ function buildSkillFactoriesForUnit(u){
       );
     } else {
       F.push(
-        { key:'拼尽全力保卫队长', prob:0.60, cond:()=>true, make:()=> skill('拼尽全力保卫队长',2,'red','进入反伤姿态：3回合内伤害-40%、每回合+10SP、反弹30%所受HP伤（期间无法移动）',
+        { key:'拼尽全力保卫队长', prob:0.30, cond:()=>true, make:()=> skill('拼尽全力保卫队长',2,'red','进入反伤姿态：3回合内伤害-25%、每回合+10SP、反弹25%所受HP伤（期间无法移动），Haz 伤害+15%并回复15%HP+15SP',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
           (uu)=> tusk_RetaliateGuard(uu),
           {},
@@ -4882,8 +5010,8 @@ function buildSkillFactoriesForUnit(u){
           {aoe:true},
           {castMs:1200}
         )},
-        { key:'双钩牵制', prob:0.45, cond:()=>true, make:()=> skill('双钩牵制',2,'red','前方3格优先最近：拉近1格并赋予恐惧（-1步）',
-          (uu,aimDir)=> aimDir? range_forward_n(uu,3,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,3,d).forEach(x=>a.push(x)); return a;})(),
+        { key:'双钩牵制', prob:0.50, cond:()=>true, make:()=> skill('双钩牵制',2,'red','前方4格优先最近：拉近1格并赋予恐惧（-2步）',
+          (uu,aimDir)=> aimDir? range_forward_n(uu,4,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,4,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> neyla_DoubleHook(uu,desc),
           {},
           {castMs:1100}
@@ -4892,7 +5020,7 @@ function buildSkillFactoriesForUnit(u){
       );
     } else {
       F.push(
-        { key:'终末之影', prob:0.50, cond:()=>true, make:()=> makeNeylaEndShadowSkill(u) },
+        { key:'终末之影', prob:1.0, cond:()=>true, make:()=> makeNeylaEndShadowSkill(u) },
         { key:'执行……', prob:0.55, cond:()=>true, make:()=> skill('执行……',2,'red','前方整排 20伤/20伤（第二枪<15%处决）；自身第一枪-15HP，第二枪-15HP-40SP',
           (uu,aimDir)=> aimDir? range_line(uu,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_line(uu,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> neyla_ExecuteHarpoons(uu,desc),
@@ -4904,13 +5032,19 @@ function buildSkillFactoriesForUnit(u){
   } else if(u.id==='kyn'){
     if(!u.oppression){
       F.push(
-        { key:'迅影突刺', prob:0.60, cond:()=>true, make:()=> skill('迅影突刺',1,'green','5x5内任一敌人身边 20HP（≤25%处决，处决后返身）',
+        { key:'迅影突刺', prob:0.70, cond:()=>true, make:()=> skill('迅影突刺',1,'green','5x5内任一敌人身边 20HP（≤25%处决，处决后返身）',
           (uu)=> range_square_n(uu,2),
           (uu,aim)=>{ const tu=getUnitAt(aim.r,aim.c); if(tu && tu.side!==uu.side) kyn_ShadowDash(uu,tu); },
           {aoe:false},
           {cellTargeting:true, castMs:1200}
         )},
-        { key:'死亡宣告', prob:0.25, cond:()=>true, make:()=> skill('死亡宣告',3,'red','单体 50HP+30SP（≤30%处决，处决后返身）',
+        { key:'准备。。', prob:0.40, cond:()=>true, make:()=> skill('准备。。',2,'blue','位移≤3，并恢复自身 5SP',
+          (uu)=> range_move_radius(uu,3),
+          (uu,payload)=> kyn_PrepareMove(uu,payload),
+          {},
+          {moveSkill:true, moveRadius:3, castMs:600}
+        )},
+        { key:'死亡宣告', prob:0.30, cond:()=>true, make:()=> skill('死亡宣告',3,'red','单体 50HP+30SP（≤30%处决，处决后返身）',
           (uu)=> inRadiusCells(uu,6,{allowOccupied:true}).map(p=>({...p,dir:uu.facing})),
           (uu,aim)=>{ const tu=getUnitAt(aim.r,aim.c); if(tu && tu.side!==uu.side) kyn_DeathCall(uu,tu); },
           {aoe:false},
@@ -4964,7 +5098,8 @@ function drawOneSkill(u){
 function drawSkills(u, n){
   let toDraw = Math.max(0, Math.min(n, SKILLPOOL_MAX - u.skillPool.length));
   while(toDraw>0){ const sk=drawOneSkill(u); if(!sk) break; u.skillPool.push(sk); toDraw--; }
-  if(u.skillPool.length > SKILLPOOL_MAX) u.skillPool.length = SKILLPOOL_MAX;
+  const hasOvercap = (u.skillPool || []).some(s=>s && s.meta && s.meta.ignoreSkillCap);
+  if(!hasOvercap && u.skillPool.length > SKILLPOOL_MAX) u.skillPool.length = SKILLPOOL_MAX;
 }
 function ensureStartHand(u){ if(u.dealtStart) return; u.skillPool.length = 0; drawSkills(u, START_HAND_COUNT); u.dealtStart = true; appendLog(`${u.name} 起手手牌：${u.skillPool.map(s=>s.name).join(' / ')}`); }
 
@@ -5289,6 +5424,7 @@ function summarizeNegatives(u){
   if(u.status.dependStacks>0) parts.push(`依赖x${u.status.dependStacks}`);
   if(u.status.agileStacks>0) parts.push(`灵活x${u.status.agileStacks}`);
   if(u.status.afterimageStacks>0) parts.push(`残影x${u.status.afterimageStacks}`);
+  if(u.status.stealth>0) parts.push(`隐秘`);
   if(u.status.affirmationStacks>0) parts.push(`肯定x${u.status.affirmationStacks}`);
   if(u.status.mockeryStacks>0) parts.push(`戏谑x${u.status.mockeryStacks}`);
   if(u.status.violenceStacks>0) parts.push(`暴力x${u.status.violenceStacks}`);
@@ -5470,6 +5606,9 @@ function handleSkillConfirmCell(u, sk, aimCell){
     actionInProgress = true;
     setInteractionLocked(true);
     try{
+      u._lastActionWasSkill = true;
+      if(isMoveSkill){ u._movedThisTurn = true; }
+      u._lastUsedSkill = sk;
       let ret;
       if(isMoveSkill) ret = sk.execFn(u, {moveTo: aimCell});
       else if(isCellTargeting) ret = sk.execFn(u, aimCell);
@@ -5542,6 +5681,8 @@ function onCellClick(r,c){
   if(sel.side!=='player') cameraFocusOnCell(r,c);
   pulseCell(r,c);
   if(sel.id==='karma' && sel.consecAttacks>0){ appendLog(`${sel.name} 的连击被打断（移动）`); sel.consecAttacks=0; }
+  sel._lastActionWasSkill = false;
+  sel._movedThisTurn = true;
   unitActed(sel);
   clearHighlights(); renderAll(); showSelected(sel);
   setTimeout(()=>{ checkEndOfTurn(); }, 160);
@@ -5747,6 +5888,13 @@ function processUnitsTurnStart(side){
         appendLog(`${u.name} 的姿态结束`);
       }
     }
+    if(u.id==='haz' && u._tuskBoostTurns>0 && u.side===side){
+      u._tuskBoostTurns -= 1;
+      if(u._tuskBoostTurns<=0){
+        delete u._tuskBoostTurns;
+        appendLog('Haz 的鼓舞结束');
+      }
+    }
     if(u._roarShieldTurns && u._roarShieldTurns>0){
       u._roarShieldTurns -= 1;
       if(u._roarShieldTurns<=0) delete u._roarShieldTurns;
@@ -5854,11 +6002,17 @@ function processUnitsTurnStart(side){
 
   // Zai forced bite (only on Zai side)
   const zai = units['zai'];
-  if(zai && zai.hp>0 && zai.side===side && zai.sp <= 40 && !zai._forceBiteThisTurn && !zai._bitePenaltyApplied){
+  if(zai && zai.hp>0 && zai.side===side){
+    zai._bitePenaltyApplied = false;
+  }
+  if(zai && zai.hp>0 && zai.side===side && zai.sp <= 40 && !zai._forceBiteThisTurn){
     zai._forceBiteThisTurn = true;
     zai._biteHitThisTurn = false;
+    zai._biteUsedThisTurn = false;
+    zai._bitePenaltyApplied = false;
     if(side==='enemy') enemySteps += 5; else playerSteps += 5;
-    appendLog('吃掉你触发！宰本回合只能使用「暴戾撕咬」并获得额外步数');
+    zai.skillPool = [makeZaiBiteSkill(zai)];
+    appendLog('吃掉你触发！宰本回合锁定「暴戾撕咬」，只能逼近并尝试撕咬（额外步数+5）');
   }
 
   checkHazComebackStatus();
@@ -5885,6 +6039,32 @@ function processUnitsTurnEnd(side){
       const next = Math.max(0, u.status.stunned-1);
       updateStatusStacks(u,'stunned', next, {label:'眩晕', type:'debuff'});
       appendLog(`${u.name} 的眩晕减少 1（剩余 ${u.status.stunned}）`);
+    }
+  }
+  const zai = units['zai'];
+  if(zai && zai.hp>0 && zai.side===side && zai._forceBiteThisTurn){
+    if(!zai._biteUsedThisTurn){
+      appendLog('暴戾撕咬未使用：技能消失并触发反噬');
+      zaiApplyBitePenalty(zai);
+    }
+    zai._forceBiteThisTurn = false;
+    zai._biteUsedThisTurn = false;
+    zai._biteHitThisTurn = false;
+    zai.skillPool = [];
+    zai.dealtStart = false;
+  }
+  const kyn = units['kyn'];
+  if(kyn && kyn.hp>0 && kyn.side===side){
+    if(!kyn._didAttackThisTurn && !kyn._tookDamageThisTurn){
+      kyn._stealthTurns = (kyn._stealthTurns || 0) + 1;
+    } else {
+      kyn._stealthTurns = 0;
+      if(kyn.status && kyn.status.stealth){
+        updateStatusStacks(kyn,'stealth',0,{label:'隐秘', type:'buff'});
+      }
+    }
+    if(kyn._stealthTurns >= 3){
+      updateStatusStacks(kyn,'stealth',1,{label:'隐秘', type:'buff'});
     }
   }
 }
@@ -5962,7 +6142,9 @@ function endTurn(){
 function distanceForAI(u,target){
   const baseR = u.size===2 ? (u.r+0.5) : u.r;
   const baseC = u.size===2 ? (u.c+0.5) : u.c;
-  return Math.abs(baseR - target.r) + Math.abs(baseC - target.c);
+  const base = Math.abs(baseR - target.r) + Math.abs(baseC - target.c);
+  const stealthBias = (target.status && target.status.stealth>0) ? 5 : 0;
+  return base + stealthBias;
 }
 function isWalkableForUnit(u, r, c){
   if(u.size===2) return canPlace2x2(u, r, c);
@@ -6202,6 +6384,9 @@ async function execEnemySkillCandidate(en, cand){
 
   actionInProgress = true;
   try{
+    en._lastActionWasSkill = true;
+    if(cand.sk.meta && cand.sk.meta.moveSkill){ en._movedThisTurn = true; }
+    en._lastUsedSkill = cand.sk;
     if(cand.targetUnit && ((cand.sk.meta && cand.sk.meta.cellTargeting) || (cand.sk.estimate && cand.sk.estimate.cellTargeting))){
       await cand.sk.execFn(en, {r:cand.targetUnit.r, c:cand.targetUnit.c});
     } else if(cand.targetUnit){
@@ -6236,6 +6421,7 @@ function stepTowardNearestPlayer(en){
       en.r = step.r; en.c = step.c;
       enemySteps = Math.max(0, enemySteps - 1);
       updateStepsUI();
+      en._movedThisTurn = true;
       cameraFocusOnCell(en.r,en.c);
       renderAll();
       appendLog(`${en.name} 逼近：向玩家方向移动 1 步`);
@@ -6257,6 +6443,7 @@ function stepTowardNearestPlayer(en){
     try{
       enemySteps = Math.max(0, enemySteps - 1);
       updateStepsUI();
+      en._movedThisTurn = true;
       cameraFocusOnCell(en.r,en.c);
       renderAll();
       appendLog(`${en.name} 逼近：向最近玩家挪动 1 步`);
