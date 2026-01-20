@@ -5904,8 +5904,8 @@ function processUnitsTurnStart(side){
   applyParalysisAtTurnStart(side);
 
   const sideUnits = Object.values(units).filter(u=>u.hp>0 && u.side===side);
-  const haz = units['haz'];
-  if(haz && haz.hp>0 && haz.side===side){
+  const hazUnit = units['haz'];
+  if(hazUnit && hazUnit.hp>0 && hazUnit.side===side){
     hazAssistTargetId = null;
     hazAssistReady = false;
     hazAssistHits = 0;
