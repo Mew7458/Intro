@@ -2120,6 +2120,20 @@ function showIntroLine(text){
   });
 }
 function hideIntroDialog(){ if(introDialogEl){ introDialogEl.style.display = 'none'; } }
+function startBossBGM(){
+  if(!bossBGM) return;
+  bossBGM.loop = true;
+  bossBGM.volume = 0.6;
+  if(bossBGM.readyState >= 2){
+    bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
+    try{ tryStartIdleBeatFX(); }catch(e){}
+  } else {
+    bossBGM.addEventListener('canplay', () => {
+      bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
+      try{ tryStartIdleBeatFX(); }catch(e){}
+    }, {once: true});
+  }
+}
 function stopBossBGM(){
   if(bossBGM){
     bossBGM.pause();
@@ -2146,18 +2160,7 @@ async function playIntroCinematic(){
   await sleep(520);
   showRoundBanner('回合一', 1800);
   // Start Boss BGM after Round 1 banner appears
-  if(bossBGM){
-    bossBGM.volume = 0.6;
-    if(bossBGM.readyState >= 2){
-      bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
-      try{ tryStartIdleBeatFX(); }catch(e){}
-    } else {
-      bossBGM.addEventListener('canplay', () => {
-        bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
-      try{ tryStartIdleBeatFX(); }catch(e){}
-      }, {once: true});
-    }
-  }
+  startBossBGM();
   await sleep(1600);
   setInteractionLocked(false);
 }
@@ -2595,7 +2598,6 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
         const cloned = cloneSkillWithZeroCost(source._lastUsedSkill);
         source.skillPool = source.skillPool || [];
         source.skillPool.push(cloned);
-        if(source.skillPool.length > SKILLPOOL_MAX) source.skillPool.length = SKILLPOOL_MAX;
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，并复刻「${cloned.name}」(0步)`);
       } else {
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血`);
@@ -4357,6 +4359,7 @@ async function zai_BrutalBite(zai){
   // Clear SP instantly (true)
   const spLoss = target.sp;
   target.sp = 0;
+  handleSpCrashIfNeeded(target);
   syncSpBroken(target);
   showDamageFloat(target, 0, spLoss, {trueDamage:true});
   appendLog(`${target.name} 的 SP 被清空！`);
@@ -4527,7 +4530,7 @@ function ensureNeylaEndShadowGuarantee(u){
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
 function cloneSkillWithZeroCost(sk){
   if(!sk) return null;
-  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false});
+  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false, ignoreSkillCap:true});
   return skill(sk.name, 0, sk.color, sk.desc, sk.rangeFn, sk.execFn, sk.estimate || {}, meta);
 }
 
@@ -5877,6 +5880,9 @@ function processUnitsTurnStart(side){
     u._tookDamageThisTurn = false;
     u._didAttackThisTurn = false;
     u._skillInExecution = null;
+
+    const extraDraw = Math.max(0, u.turnsStarted);
+    if(extraDraw>0) drawSkills(u, extraDraw);
   }
 
   // stance ticking (Tusk etc.)
@@ -6835,6 +6841,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
   fsBtn.onclick = (e)=>{ e.stopPropagation(); if(interactionLocked) return; toggleFullscreen(); };
   document.body.appendChild(fsBtn);
   try{ if(!document.fullscreenElement) toggleFullscreen(); }catch(e){}
+  startBossBGM();
+  const resumeBgm = () => startBossBGM();
+  document.addEventListener('pointerdown', resumeBgm, {once:true});
 
   // ESC 取消 GOD’S WILL
   window.addEventListener('keydown',(e)=>{
