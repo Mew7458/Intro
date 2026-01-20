@@ -2120,6 +2120,20 @@ function showIntroLine(text){
   });
 }
 function hideIntroDialog(){ if(introDialogEl){ introDialogEl.style.display = 'none'; } }
+function startBossBGM(){
+  if(!bossBGM) return;
+  bossBGM.loop = true;
+  bossBGM.volume = 0.6;
+  if(bossBGM.readyState >= 2){
+    bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
+    try{ tryStartIdleBeatFX(); }catch(e){}
+  } else {
+    bossBGM.addEventListener('canplay', () => {
+      bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
+      try{ tryStartIdleBeatFX(); }catch(e){}
+    }, {once: true});
+  }
+}
 function stopBossBGM(){
   if(bossBGM){
     bossBGM.pause();
@@ -2146,18 +2160,7 @@ async function playIntroCinematic(){
   await sleep(520);
   showRoundBanner('回合一', 1800);
   // Start Boss BGM after Round 1 banner appears
-  if(bossBGM){
-    bossBGM.volume = 0.6;
-    if(bossBGM.readyState >= 2){
-      bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
-      try{ tryStartIdleBeatFX(); }catch(e){}
-    } else {
-      bossBGM.addEventListener('canplay', () => {
-        bossBGM.play().catch(e => console.log('Boss BGM autoplay blocked:', e));
-      try{ tryStartIdleBeatFX(); }catch(e){}
-      }, {once: true});
-    }
-  }
+  startBossBGM();
   await sleep(1600);
   setInteractionLocked(false);
 }
@@ -5877,6 +5880,9 @@ function processUnitsTurnStart(side){
     u._tookDamageThisTurn = false;
     u._didAttackThisTurn = false;
     u._skillInExecution = null;
+
+    const extraDraw = Math.max(0, u.turnsStarted);
+    if(extraDraw>0) drawSkills(u, extraDraw);
   }
 
   // stance ticking (Tusk etc.)
@@ -6835,6 +6841,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
   fsBtn.onclick = (e)=>{ e.stopPropagation(); if(interactionLocked) return; toggleFullscreen(); };
   document.body.appendChild(fsBtn);
   try{ if(!document.fullscreenElement) toggleFullscreen(); }catch(e){}
+  startBossBGM();
+  const resumeBgm = () => startBossBGM();
+  document.addEventListener('pointerdown', resumeBgm, {once:true});
 
   // ESC 取消 GOD’S WILL
   window.addEventListener('keydown',(e)=>{
