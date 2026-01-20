@@ -167,6 +167,7 @@ let playerStepsEl, enemyStepsEl, roundCountEl, partyStatus, selectedInfo, skillP
 let hazMarkedTargetId = null;
 let hazAssistTargetId = null;
 let hazAssistReady = false;
+let hazAssistHits = 0;
 let hazTeamCollapsed = false;
 
 let interactionLocked = false;
@@ -2577,8 +2578,16 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     showSkillFx('haz:怨念滋生·恐惧',{target:u});
   }
   if(source && source.id==='haz' && u.side!==source.side){
-    hazAssistTargetId = u.id;
-    hazAssistReady = true;
+    if(!source._assistSkillTicked){
+      source._assistSkillTicked = true;
+      if(hazAssistTargetId === u.id){
+        hazAssistHits += 1;
+      } else {
+        hazAssistTargetId = u.id;
+        hazAssistHits = 1;
+      }
+      hazAssistReady = hazAssistHits >= 2;
+    }
   }
 
   if(source && source.id==='katz' && source._hitsThisTurn>=2 && !source._execTriggeredThisTurn && u.hp>0){
@@ -2606,6 +2615,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
       }
       hazAssistReady = false;
       hazAssistTargetId = null;
+      hazAssistHits = 0;
     }
   }
 
@@ -2697,6 +2707,7 @@ function handleUnitDeath(u, source){
   if(hazAssistTargetId === u.id){
     hazAssistTargetId = null;
     hazAssistReady = false;
+    hazAssistHits = 0;
   }
   if(source && source.id === 'kyn' && source.passives.includes('kynReturn')){
     source._returnToHazNextTurn = true;
@@ -5634,6 +5645,7 @@ function handleSkillConfirmCell(u, sk, aimCell){
       u._lastActionWasSkill = true;
       if(isMoveSkill){ u._movedThisTurn = true; }
       u._lastUsedSkill = sk;
+      if(u.id==='haz'){ u._assistSkillTicked = false; }
       let ret;
       if(isMoveSkill) ret = sk.execFn(u, {moveTo: aimCell});
       else if(isCellTargeting) ret = sk.execFn(u, aimCell);
@@ -5892,6 +5904,12 @@ function processUnitsTurnStart(side){
   applyParalysisAtTurnStart(side);
 
   const sideUnits = Object.values(units).filter(u=>u.hp>0 && u.side===side);
+  const haz = units['haz'];
+  if(haz && haz.hp>0 && haz.side===side){
+    hazAssistTargetId = null;
+    hazAssistReady = false;
+    hazAssistHits = 0;
+  }
 
   // per-turn trackers
   for(const u of sideUnits){
@@ -6290,8 +6308,8 @@ function buildSkillCandidates(en){
   const skillset = (en.skillPool && en.skillPool.length) ? en.skillPool : [];
   const candidates=[];
   for(const sk of skillset){
-    const consumeAll = shouldConsumeAllSteps(en, sk);
-    const actualCost = consumeAll ? enemySteps : getSkillCost(en, sk);
+    const consumeAll = !!(sk.meta && sk.meta.consumeAllSteps);
+    const actualCost = consumeAll ? enemySteps : sk.cost;
     if(actualCost<0 || actualCost>enemySteps) continue;
     // 移动类技能（冲刺/瞬移）AI 目前不使用，避免误判
     if((sk.meta && sk.meta.moveSkill) || (sk.estimate && sk.estimate.moveSkill)) continue;
@@ -6417,6 +6435,7 @@ async function execEnemySkillCandidate(en, cand){
     en._lastActionWasSkill = true;
     if(cand.sk.meta && cand.sk.meta.moveSkill){ en._movedThisTurn = true; }
     en._lastUsedSkill = cand.sk;
+    if(en.id==='haz'){ en._assistSkillTicked = false; }
     if(cand.targetUnit && ((cand.sk.meta && cand.sk.meta.cellTargeting) || (cand.sk.estimate && cand.sk.estimate.cellTargeting))){
       await cand.sk.execFn(en, {r:cand.targetUnit.r, c:cand.targetUnit.c});
     } else if(cand.targetUnit){
