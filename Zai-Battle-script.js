@@ -2598,7 +2598,6 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
         const cloned = cloneSkillWithZeroCost(source._lastUsedSkill);
         source.skillPool = source.skillPool || [];
         source.skillPool.push(cloned);
-        if(source.skillPool.length > SKILLPOOL_MAX) source.skillPool.length = SKILLPOOL_MAX;
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血，并复刻「${cloned.name}」(0步)`);
       } else {
         appendLog(`这难道就是……：${haz.name} 与 ${source.name} 获得鸡血`);
@@ -4360,6 +4359,7 @@ async function zai_BrutalBite(zai){
   // Clear SP instantly (true)
   const spLoss = target.sp;
   target.sp = 0;
+  handleSpCrashIfNeeded(target);
   syncSpBroken(target);
   showDamageFloat(target, 0, spLoss, {trueDamage:true});
   appendLog(`${target.name} 的 SP 被清空！`);
@@ -4530,7 +4530,7 @@ function ensureNeylaEndShadowGuarantee(u){
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
 function cloneSkillWithZeroCost(sk){
   if(!sk) return null;
-  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false});
+  const meta = Object.assign({}, sk.meta || {}, {consumeAllSteps:false, ignoreSkillCap:true});
   return skill(sk.name, 0, sk.color, sk.desc, sk.rangeFn, sk.execFn, sk.estimate || {}, meta);
 }
 
