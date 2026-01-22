@@ -4322,8 +4322,10 @@ async function zai_BloodStar(u){
 }
 async function zai_BrutalSlash(u, desc){
   const dir = (desc && desc.dir) ? desc.dir : (u.facing || 'right');
+  const minHpFloor = (desc && desc.minHpFloor) ? desc.minHpFloor : null;
+  const skipActed = desc && desc.skipActed;
   const cells = range_forward_n(u, 6, dir); // direction-based (like "拿来吧你")
-  if(cells.length === 0){ appendLog('不讲理的蛮力劈砍 无目标'); unitActed(u); return; }
+  if(cells.length === 0){ appendLog('不讲理的蛮力劈砍 无目标'); if(!skipActed) unitActed(u); return; }
 
   const victimSide = (u.side==='player') ? 'enemy' : 'player';
   const marks = cells.filter(cell=>{ const t=getUnitAt(cell.r,cell.c); return t && t.side===victimSide && t.hp>0; });
@@ -4335,20 +4337,33 @@ async function zai_BrutalSlash(u, desc){
     if(target && target.side===victimSide && target.hp>0 && !hitIds.has(target.id)){
       hitIds.add(target.id);
       const dmg = calcOutgoingDamage(u, 45, target, '不讲理的蛮力劈砍');
-      damageUnit(target.id, dmg, 5, `${u.name} 蛮力劈砍`, u.id);
+      if(minHpFloor){
+        damageUnitWithFloor(target.id, dmg, 5, `${u.name} 蛮力劈砍`, u.id, minHpFloor);
+      } else {
+        damageUnit(target.id, dmg, 5, `${u.name} 蛮力劈砍`, u.id);
+      }
       u.dmgDone += dmg;
       zaiApplyTetanus(target, 1);
     }
   }
-  unitActed(u);
+  if(!skipActed) unitActed(u);
+}
+function forwardLineAtLimit(center, dir, limit){
+  const arr=[]; const d=DIRS[dir]; let r=center.r+d.dr, c=center.c+d.dc;
+  for(let i=0;i<limit;i++){
+    if(center.size===2){ if(!(clampCell(r,c) && clampCell(r+1,c+1))) break; }
+    else if(!clampCell(r,c)) break;
+    arr.push({r,c}); r+=d.dr; c+=d.dc;
+  }
+  return arr;
 }
 function zaiCrossCells(center){
-  // four rays to the edge ("上下左右四行")
+  // four rays up to 6 tiles ("上下左右四行（6格）")
   return [
-    ...forwardLineAt(center,'up'),
-    ...forwardLineAt(center,'down'),
-    ...forwardLineAt(center,'left'),
-    ...forwardLineAt(center,'right'),
+    ...forwardLineAtLimit(center,'up',6),
+    ...forwardLineAtLimit(center,'down',6),
+    ...forwardLineAtLimit(center,'left',6),
+    ...forwardLineAtLimit(center,'right',6),
   ];
 }
 async function zai_BloodWave(u){
@@ -4411,21 +4426,51 @@ async function zai_TetanusDetonate(u){
   }
   unitActed(u);
 }
+function zaiEbbTideFanCells(u, dir){
+  const cells = [];
+  const ranges = [
+    {dist:1, half:1},
+    {dist:2, half:2},
+    {dist:3, half:3},
+  ];
+  for(const {dist, half} of ranges){
+    const base = forwardCellAt(u, dir, dist);
+    if(!base) continue;
+    if(dir==='right' || dir==='left'){
+      for(let offset=-half; offset<=half; offset++){
+        const r = base.r + offset;
+        const c = base.c;
+        if(clampCell(r,c)) cells.push({r,c});
+      }
+    } else {
+      for(let offset=-half; offset<=half; offset++){
+        const r = base.r;
+        const c = base.c + offset;
+        if(clampCell(r,c)) cells.push({r,c});
+      }
+    }
+  }
+  return cells;
+}
 async function zai_EbbTide(u, desc){
   const dir = (desc && desc.dir) ? desc.dir : (u.facing || 'right');
-  // same reach as "不讲理的蛮力劈砍" (blocked by cover)
-  const cells = range_forward_n(u, 6, dir);
+  const cells = zaiEbbTideFanCells(u, dir);
   if(cells.length === 0){ appendLog('退潮 无目标'); unitActed(u); return; }
   const marks = cells.filter(cell=>{ const t=getUnitAt(cell.r,cell.c); return t && t.side!==u.side && t.hp>0; });
   await stageMark(marks.length?marks:cells);
+  let triggerFollowUp = false;
   for(const cell of cells){
     const target = getUnitAt(cell.r, cell.c);
     if(target && target.side!==u.side && target.hp>0){
+      if((target.status?.tetanusStacks || 0) >= 5) triggerFollowUp = true;
       const dmg = calcOutgoingDamage(u, 200, target, '退潮');
       damageUnitWithFloor(target.id, dmg, 50, `${u.name} 退潮`, u.id, 50);
       u.dmgDone += dmg;
       zaiApplyTetanus(target, 5);
     }
+  }
+  if(triggerFollowUp){
+    await zai_BrutalSlash(u, {dir, minHpFloor: 50, skipActed: true});
   }
   unitActed(u);
 }
@@ -5030,20 +5075,20 @@ function buildSkillFactoriesForUnit(u){
         {aoe:true},
         {castMs:900}
       )},
-      { key:'血浪', prob:0.60, cond:()=>u.zaiForm === 'blade', make:()=> skill('血浪',2,'purple','对上下左右四行造成35HP+20SP；若命中单位，则以其为中心再次向四行扩散',
+      { key:'血浪', prob:0.60, cond:()=>u.zaiForm === 'blade', make:()=> skill('血浪',2,'purple','对上下左右四行（6格）造成35HP+20SP；若命中单位，则以其为中心再次向四行（6格）扩散',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> zai_BloodWave(uu),
         {aoe:true},
         {castMs:1200}
       )},
-      { key:'一股鱼腥味。。', prob:0.40, cond:()=>u.zaiForm === 'blade', make:()=> skill('一股鱼腥味。。',3,'purple','引爆场上所有破伤风层数（18真实伤害/层），并回复自身HP/SP',
+      { key:'一股鱼腥味。。', prob:0.40, cond:()=>u.zaiForm === 'blade', make:()=> skill('一股鱼腥味。。',3,'purple','引爆场上所有单位的破伤风层数（每层18真实伤害），并回复自身5HP+2SP',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> zai_TetanusDetonate(uu),
         {aoe:true},
         {castMs:1200}
       )},
-      { key:'退潮', prob:0.10, cond:()=>u.zaiForm === 'blade', make:()=> skill('退潮',5,'purple','前方6格 200HP+50SP 并叠5层破伤风（锁血50）',
-        (uu,aimDir)=> aimDir? range_forward_n(uu,6,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,6,d).forEach(x=>a.push(x)); return a;})(),
+      { key:'退潮', prob:0.10, cond:()=>u.zaiForm === 'blade', make:()=> skill('退潮',5,'purple','前方扇形（7/5/3格）200HP+50SP并叠5层破伤风；若命中目标已有≥5层破伤风，则追加一次不讲理的蛮力劈砍；任一段伤害若会低于50HP则锁血50',
+        (uu,aimDir)=> aimDir ? zaiEbbTideFanCells(uu, aimDir).map(cell=>({r:cell.r,c:cell.c,dir:aimDir})) : (()=>{const a=[]; const seen=new Set(); for(const d in DIRS){ for(const cell of zaiEbbTideFanCells(uu, d)){ const k=cell.r+','+cell.c; if(!seen.has(k)){ seen.add(k); a.push({r:cell.r,c:cell.c,dir:d}); } } } return a;})(),
         (uu,desc)=> zai_EbbTide(uu,desc),
         {aoe:true},
         {castMs:1400}
