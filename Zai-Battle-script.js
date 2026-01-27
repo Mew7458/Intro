@@ -2479,7 +2479,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
       return;
     }
 
-    if(u.id === 'zai' && u.zaiForm === 'dagger' && Math.random() < 0.25){
+    if(u.id === 'zai' && u.zaiForm === 'dagger' && (u.status?.stunned || 0) <= 0 && Math.random() < 0.25){
       appendLog(`${u.name} 匕形态闪避成功！`);
       addStatusStacks(u, 'afterimageStacks', 1, {label:'残影', type:'buff'});
       showStatusFloat(u,'闪避',{type:'buff', offsetY:-48});
@@ -7253,7 +7253,9 @@ function checkHazComebackStatus(){
   if(!haz || haz.hp<=0) return;
   // 触发条件：同阵营只剩 Haz（无论 Haz 是玩家还是敌方）
   const others = Object.values(units).filter(v=>v.side===haz.side && v.hp>0 && v.id!=='haz');
-  const shouldActive = (others.length===0);
+  const tusk = units['tusk'];
+  const tuskAlive = tusk && tusk.hp>0 && tusk.side===haz.side;
+  const shouldActive = (others.length===0) || !tuskAlive;
   if(shouldActive && !haz._comeback){
     haz._comeback = true;
 
