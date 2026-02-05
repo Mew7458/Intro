@@ -28,6 +28,7 @@ let currentStoryAudioSrc = null;
 const STORAGE_KEY_COINS = 'gwdemo_coins';
 const STORAGE_KEY_POINTS = 'gwdemo_points';
 const STORAGE_KEY_FRAGMENTS = 'gwdemo_fragments';
+const STORAGE_KEY_SCRATCH_PURCHASES = 'gwdemo_scratch_purchases';
 const STORAGE_KEY_STAGE_COMPLETIONS = 'gwdemo_stage_completions';
 const STORAGE_KEY_UNLOCKED_ACCESSORIES = 'gwdemo_unlocked_accessories';
 const STORAGE_KEY_EQUIPPED_ACCESSORIES = 'gwdemo_equipped_accessories';
@@ -253,6 +254,15 @@ function addCoins(amount) {
   return newAmount;
 }
 
+function loadScratchPurchases() {
+  const saved = localStorage.getItem(STORAGE_KEY_SCRATCH_PURCHASES);
+  return saved ? parseInt(saved, 10) : 0;
+}
+
+function saveScratchPurchases(amount) {
+  localStorage.setItem(STORAGE_KEY_SCRATCH_PURCHASES, amount.toString());
+}
+
 function loadPoints() {
   const saved = localStorage.getItem(STORAGE_KEY_POINTS);
   return saved ? parseInt(saved, 10) : 0;
@@ -405,6 +415,7 @@ const SCRATCH_GRID_COLUMNS = 7;
 const SCRATCH_GRID_ROWS = 5;
 const SCRATCH_CELL_COUNT = SCRATCH_GRID_COLUMNS * SCRATCH_GRID_ROWS;
 const SCRATCH_EMPTY_CHANCE = 0.7;
+const SCRATCH_GUARANTEE_INTERVAL = 4;
 const SCRATCH_POINT_OPTIONS = [
   { value: 1, max: 21, weight: 21 },
   { value: 15, max: 15, weight: 15 },
@@ -425,7 +436,15 @@ function getWeightedRandom(options) {
   return options[options.length - 1];
 }
 
-function generateScratchGrid() {
+function shouldUseNoEmptyGrid() {
+  const purchases = loadScratchPurchases();
+  const nextPurchases = purchases + 1;
+  const noEmpty = nextPurchases % SCRATCH_GUARANTEE_INTERVAL === 0;
+  saveScratchPurchases(noEmpty ? 0 : nextPurchases);
+  return noEmpty;
+}
+
+function generateScratchGrid({ noEmpty = false } = {}) {
   const counts = new Map();
   const grid = [];
   const guaranteed = SCRATCH_POINT_OPTIONS[Math.floor(Math.random() * SCRATCH_POINT_OPTIONS.length)];
@@ -436,7 +455,7 @@ function generateScratchGrid() {
   }
 
   while (grid.length < SCRATCH_CELL_COUNT) {
-    const shouldBeEmpty = Math.random() < SCRATCH_EMPTY_CHANCE;
+    const shouldBeEmpty = !noEmpty && Math.random() < SCRATCH_EMPTY_CHANCE;
     if (shouldBeEmpty) {
       grid.push({ type: 'empty', value: '空' });
       continue;
@@ -4946,7 +4965,8 @@ function renderScratchSection(container) {
   });
 
   startScratchBtn.addEventListener('click', () => {
-    scratchState.grid = generateScratchGrid();
+    const noEmpty = shouldUseNoEmptyGrid();
+    scratchState.grid = generateScratchGrid({ noEmpty });
     scratchState.active = true;
     scratchStatus.textContent = '刮刮乐进行中：翻出三个相同内容即可获得奖励。';
     renderScratchGrid();
