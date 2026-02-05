@@ -4639,6 +4639,8 @@ function renderCharacterSection(section, characterId) {
       if (slots) slots.scrollTop = skillSelectionScroll.slots;
       if (library) library.scrollTop = skillSelectionScroll.library;
     }
+  } else if (section === 'scratch') {
+    renderScratchSection(container);
   } else {
     const header = document.createElement('h3');
     header.textContent = data.name;
@@ -4707,27 +4709,21 @@ function renderCharacterSection(section, characterId) {
 }
 
 function renderAccessoriesSection(container) {
-  const coins = loadCoins();
-  const points = loadPoints();
   const fragments = loadFragments();
   const unlocked = loadUnlockedAccessories();
   const equipped = loadEquippedAccessories();
   
-  // Header with coin count
+  // Header with fragment count
   const header = document.createElement('div');
   header.className = 'accessories-header';
   header.innerHTML = `
     <h3>配件系统</h3>
     <div class="currency-display">
-      <span class="currency-chip">💰 金币: <span class="coin-count">${coins}</span></span>
-      <span class="currency-chip">⭐ 积分: <span class="points-count">${points}</span></span>
       <span class="currency-chip">🧩 装备碎片: <span class="fragment-count">${fragments}</span></span>
     </div>
   `;
   container.appendChild(header);
 
-  const coinCountEl = header.querySelector('.coin-count');
-  const pointsCountEl = header.querySelector('.points-count');
   const fragmentCountEl = header.querySelector('.fragment-count');
   
   // Characters equipment slots
@@ -4754,6 +4750,85 @@ function renderAccessoriesSection(container) {
   });
   
   container.appendChild(slotsContainer);
+  
+  // Shop section
+  const shopTitle = document.createElement('h4');
+  shopTitle.textContent = '装备碎片兑换';
+  shopTitle.style.marginTop = '24px';
+  container.appendChild(shopTitle);
+  
+  const shop = document.createElement('div');
+  shop.className = 'accessories-shop';
+  
+  Object.values(accessoryDefinitions).forEach(acc => {
+    const isUnlocked = unlocked.includes(acc.id);
+    const card = document.createElement('div');
+    card.className = `accessory-card ${isUnlocked ? 'unlocked' : 'locked'}`;
+    card.dataset.accessoryId = acc.id;
+    card.draggable = isUnlocked;
+    
+    card.innerHTML = `
+      <div class="accessory-name">${acc.name}</div>
+      <div class="accessory-cost">🧩 ${acc.fragmentCost} 装备碎片</div>
+      <div class="accessory-description">${acc.description}</div>
+      ${!isUnlocked ? `<button class="unlock-btn" data-accessory="${acc.id}">解锁</button>` : '<div class="unlocked-badge">✓ 已解锁</div>'}
+    `;
+    
+    shop.appendChild(card);
+  });
+  
+  container.appendChild(shop);
+  
+  // Add event listeners for unlock buttons
+  container.querySelectorAll('.unlock-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const accessoryId = btn.dataset.accessory;
+      const accessory = accessoryDefinitions[accessoryId];
+      const currentFragments = loadFragments();
+      
+      if (currentFragments >= accessory.fragmentCost) {
+        saveFragments(currentFragments - accessory.fragmentCost);
+        unlockAccessory(accessoryId);
+        showToast(`解锁成功：${accessory.name}`);
+        // Re-render the accessories section
+        const activeChar = document.querySelector('.character-tab.active').dataset.character;
+        renderCharacterSection('accessories', activeChar);
+      } else {
+        showToast(`装备碎片不足！需要 ${accessory.fragmentCost} 个，当前只有 ${currentFragments} 个`);
+      }
+    });
+  });
+  
+  // Add drag and drop handlers
+  setupAccessoriesDragDrop(container);
+
+  function updateFragmentDisplay() {
+    fragmentCountEl.textContent = loadFragments();
+  }
+
+  updateFragmentDisplay();
+}
+
+function renderScratchSection(container) {
+  const coins = loadCoins();
+  const points = loadPoints();
+  const fragments = loadFragments();
+
+  const header = document.createElement('div');
+  header.className = 'accessories-header';
+  header.innerHTML = `
+    <h3>金币</h3>
+    <div class="currency-display">
+      <span class="currency-chip">💰 金币: <span class="coin-count">${coins}</span></span>
+      <span class="currency-chip">⭐ 积分: <span class="points-count">${points}</span></span>
+      <span class="currency-chip">🧩 装备碎片: <span class="fragment-count">${fragments}</span></span>
+    </div>
+  `;
+  container.appendChild(header);
+
+  const coinCountEl = header.querySelector('.coin-count');
+  const pointsCountEl = header.querySelector('.points-count');
+  const fragmentCountEl = header.querySelector('.fragment-count');
 
   const scratchSection = document.createElement('div');
   scratchSection.className = 'scratch-section';
@@ -4769,7 +4844,7 @@ function renderAccessoriesSection(container) {
 
   const startScratchBtn = document.createElement('button');
   startScratchBtn.className = 'scratch-start-btn';
-  startScratchBtn.textContent = '消耗 1 金币开始刮刮乐';
+  startScratchBtn.textContent = '开始刮刮乐';
   scratchControls.appendChild(startScratchBtn);
 
   const exchangeBtn = document.createElement('button');
@@ -4797,7 +4872,7 @@ function renderAccessoriesSection(container) {
   };
 
   function updateScratchButtons() {
-    startScratchBtn.disabled = scratchState.active || loadCoins() < 1;
+    startScratchBtn.disabled = scratchState.active;
     exchangeBtn.disabled = loadPoints() < 20;
   }
 
@@ -4871,12 +4946,6 @@ function renderAccessoriesSection(container) {
   });
 
   startScratchBtn.addEventListener('click', () => {
-    const currentCoins = loadCoins();
-    if (currentCoins < 1) {
-      showToast('金币不足，无法开始刮刮乐。');
-      return;
-    }
-    saveCoins(currentCoins - 1);
     scratchState.grid = generateScratchGrid();
     scratchState.active = true;
     scratchStatus.textContent = '刮刮乐进行中：翻出三个相同内容即可获得奖励。';
@@ -4897,57 +4966,6 @@ function renderAccessoriesSection(container) {
   });
 
   updateScratchButtons();
-  
-  // Shop section
-  const shopTitle = document.createElement('h4');
-  shopTitle.textContent = '装备碎片兑换';
-  shopTitle.style.marginTop = '24px';
-  container.appendChild(shopTitle);
-  
-  const shop = document.createElement('div');
-  shop.className = 'accessories-shop';
-  
-  Object.values(accessoryDefinitions).forEach(acc => {
-    const isUnlocked = unlocked.includes(acc.id);
-    const card = document.createElement('div');
-    card.className = `accessory-card ${isUnlocked ? 'unlocked' : 'locked'}`;
-    card.dataset.accessoryId = acc.id;
-    card.draggable = isUnlocked;
-    
-    card.innerHTML = `
-      <div class="accessory-name">${acc.name}</div>
-      <div class="accessory-cost">🧩 ${acc.fragmentCost} 装备碎片</div>
-      <div class="accessory-description">${acc.description}</div>
-      ${!isUnlocked ? `<button class="unlock-btn" data-accessory="${acc.id}">解锁</button>` : '<div class="unlocked-badge">✓ 已解锁</div>'}
-    `;
-    
-    shop.appendChild(card);
-  });
-  
-  container.appendChild(shop);
-  
-  // Add event listeners for unlock buttons
-  container.querySelectorAll('.unlock-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const accessoryId = btn.dataset.accessory;
-      const accessory = accessoryDefinitions[accessoryId];
-      const currentFragments = loadFragments();
-      
-      if (currentFragments >= accessory.fragmentCost) {
-        saveFragments(currentFragments - accessory.fragmentCost);
-        unlockAccessory(accessoryId);
-        showToast(`解锁成功：${accessory.name}`);
-        // Re-render the accessories section
-        const activeChar = document.querySelector('.character-tab.active').dataset.character;
-        renderCharacterSection('accessories', activeChar);
-      } else {
-        showToast(`装备碎片不足！需要 ${accessory.fragmentCost} 个，当前只有 ${currentFragments} 个`);
-      }
-    });
-  });
-  
-  // Add drag and drop handlers
-  setupAccessoriesDragDrop(container);
 }
 
 function setupAccessoriesDragDrop(container) {
@@ -5336,6 +5354,13 @@ function initCharacterBoard() {
     const accessoriesTab = document.getElementById('accessories-tab');
     if (accessoriesTab) {
       accessoriesTab.style.display = 'inline-block';
+    }
+  }
+  
+  if (isAccessoriesUnlocked()) {
+    const scratchTab = document.getElementById('scratch-tab');
+    if (scratchTab) {
+      scratchTab.style.display = 'inline-block';
     }
   }
   
