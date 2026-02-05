@@ -3539,14 +3539,41 @@ function parseSevenSeasGameTxt(text) {
   };
 }
 
-function loadSevenSeasMapFromFile() {
-  if (!sevenSeasStage || typeof fetch !== 'function') return;
+function fetchFirstAvailableText(paths) {
+  if (typeof fetch !== 'function') {
+    return Promise.reject(new Error('Fetch unavailable'));
+  }
 
-  fetch('files/Game.txt')
-    .then((response) => {
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return response.text();
-    })
+  const errors = [];
+  const tryNext = (index) => {
+    if (index >= paths.length) {
+      const error = new Error(`All Game.txt paths failed: ${errors.map((err) => err.message).join(' | ')}`);
+      error.causes = errors;
+      throw error;
+    }
+
+    const path = paths[index];
+    return fetch(path)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`${path} HTTP ${response.status}`);
+        }
+        return response.text();
+      })
+      .catch((error) => {
+        errors.push(error);
+        return tryNext(index + 1);
+      });
+  };
+
+  return tryNext(0);
+}
+
+function loadSevenSeasMapFromFile() {
+  if (!sevenSeasStage) return;
+
+  const paths = ['files/Game.txt', 'files/game.txt', 'Game.txt', 'game.txt'];
+  fetchFirstAvailableText(paths)
     .then((text) => {
       const parsed = parseSevenSeasGameTxt(text);
       if (!parsed) return;
