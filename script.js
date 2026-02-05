@@ -26,6 +26,8 @@ let currentStoryAudioSrc = null;
 
 // Accessories/System - LocalStorage Management
 const STORAGE_KEY_COINS = 'gwdemo_coins';
+const STORAGE_KEY_POINTS = 'gwdemo_points';
+const STORAGE_KEY_FRAGMENTS = 'gwdemo_fragments';
 const STORAGE_KEY_STAGE_COMPLETIONS = 'gwdemo_stage_completions';
 const STORAGE_KEY_UNLOCKED_ACCESSORIES = 'gwdemo_unlocked_accessories';
 const STORAGE_KEY_EQUIPPED_ACCESSORIES = 'gwdemo_equipped_accessories';
@@ -251,6 +253,38 @@ function addCoins(amount) {
   return newAmount;
 }
 
+function loadPoints() {
+  const saved = localStorage.getItem(STORAGE_KEY_POINTS);
+  return saved ? parseInt(saved, 10) : 0;
+}
+
+function savePoints(amount) {
+  localStorage.setItem(STORAGE_KEY_POINTS, amount.toString());
+}
+
+function addPoints(amount) {
+  const current = loadPoints();
+  const newAmount = current + amount;
+  savePoints(newAmount);
+  return newAmount;
+}
+
+function loadFragments() {
+  const saved = localStorage.getItem(STORAGE_KEY_FRAGMENTS);
+  return saved ? parseInt(saved, 10) : 0;
+}
+
+function saveFragments(amount) {
+  localStorage.setItem(STORAGE_KEY_FRAGMENTS, amount.toString());
+}
+
+function addFragments(amount) {
+  const current = loadFragments();
+  const newAmount = current + amount;
+  saveFragments(newAmount);
+  return newAmount;
+}
+
 function loadStageCompletions() {
   const saved = localStorage.getItem(STORAGE_KEY_STAGE_COMPLETIONS);
   return saved ? JSON.parse(saved) : {
@@ -332,40 +366,100 @@ const accessoryDefinitions = {
   bandage: {
     id: 'bandage',
     name: '不止只是绷带',
-    cost: 1,
+    fragmentCost: 3,
     description: '携带者每回合回15HP 15SP以及每回合给携带者增加一层"恢复"Buff'
   },
   stimulant: {
     id: 'stimulant',
     name: '兴奋剂',
-    cost: 1,
+    fragmentCost: 3,
     description: '每双数回合给携带者增加一层暴力buff'
   },
   vest: {
     id: 'vest',
     name: '防弹衣',
-    cost: 1,
+    fragmentCost: 3,
     description: '减少受到的20%的HP伤害'
   },
   wine: {
     id: 'wine',
     name: '白酒',
-    cost: 1,
+    fragmentCost: 4,
     description: '每回合给携带者增加一层灵活buff（如果携带者的灵活buff是5或以上的话就不给）'
   },
   tetanus: {
     id: 'tetanus',
     name: '破伤风之刃',
-    cost: 1,
+    fragmentCost: 3,
     description: '携带者每次攻击都给对方增加一层流血以及一层怨念（多阶段攻击每阶段都各叠一层）'
   },
   tutorial: {
     id: 'tutorial',
     name: '"自我激励教程"',
-    cost: 3,
+    fragmentCost: 5,
     description: '每回合开始 +10SP；每3回合获得1层“肯定”Buff（免疫1次SP伤害，触发后消耗1层）。'
   }
 };
+
+const SCRATCH_GRID_COLUMNS = 7;
+const SCRATCH_GRID_ROWS = 5;
+const SCRATCH_CELL_COUNT = SCRATCH_GRID_COLUMNS * SCRATCH_GRID_ROWS;
+const SCRATCH_EMPTY_CHANCE = 0.7;
+const SCRATCH_POINT_OPTIONS = [
+  { value: 1, max: 21, weight: 21 },
+  { value: 15, max: 15, weight: 15 },
+  { value: 20, max: 12, weight: 12 },
+  { value: 25, max: 6, weight: 6 },
+  { value: 30, max: 3, weight: 3 }
+];
+
+function getWeightedRandom(options) {
+  const total = options.reduce((sum, option) => sum + option.weight, 0);
+  let roll = Math.random() * total;
+  for (const option of options) {
+    roll -= option.weight;
+    if (roll <= 0) {
+      return option;
+    }
+  }
+  return options[options.length - 1];
+}
+
+function generateScratchGrid() {
+  const counts = new Map();
+  const grid = [];
+  const guaranteed = SCRATCH_POINT_OPTIONS[Math.floor(Math.random() * SCRATCH_POINT_OPTIONS.length)];
+  counts.set(guaranteed.value, 3);
+
+  for (let i = 0; i < 3; i++) {
+    grid.push({ type: 'points', value: guaranteed.value });
+  }
+
+  while (grid.length < SCRATCH_CELL_COUNT) {
+    const shouldBeEmpty = Math.random() < SCRATCH_EMPTY_CHANCE;
+    if (shouldBeEmpty) {
+      grid.push({ type: 'empty', value: '空' });
+      continue;
+    }
+
+    const availableOptions = SCRATCH_POINT_OPTIONS.filter(option => (counts.get(option.value) || 0) < option.max);
+    if (availableOptions.length === 0) {
+      grid.push({ type: 'empty', value: '空' });
+      continue;
+    }
+
+    const picked = getWeightedRandom(availableOptions);
+    counts.set(picked.value, (counts.get(picked.value) || 0) + 1);
+    grid.push({ type: 'points', value: picked.value });
+  }
+
+  for (let i = grid.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [grid[i], grid[j]] = [grid[j], grid[i]];
+  }
+
+  return grid;
+}
 
 // Skill Selection System - LocalStorage Management
 function isSkillSelectionUnlocked() {
@@ -4614,6 +4708,8 @@ function renderCharacterSection(section, characterId) {
 
 function renderAccessoriesSection(container) {
   const coins = loadCoins();
+  const points = loadPoints();
+  const fragments = loadFragments();
   const unlocked = loadUnlockedAccessories();
   const equipped = loadEquippedAccessories();
   
@@ -4622,9 +4718,17 @@ function renderAccessoriesSection(container) {
   header.className = 'accessories-header';
   header.innerHTML = `
     <h3>配件系统</h3>
-    <div class="coin-display">💰 可用币数: <span class="coin-count">${coins}</span></div>
+    <div class="currency-display">
+      <span class="currency-chip">💰 金币: <span class="coin-count">${coins}</span></span>
+      <span class="currency-chip">⭐ 积分: <span class="points-count">${points}</span></span>
+      <span class="currency-chip">🧩 装备碎片: <span class="fragment-count">${fragments}</span></span>
+    </div>
   `;
   container.appendChild(header);
+
+  const coinCountEl = header.querySelector('.coin-count');
+  const pointsCountEl = header.querySelector('.points-count');
+  const fragmentCountEl = header.querySelector('.fragment-count');
   
   // Characters equipment slots
   const slotsContainer = document.createElement('div');
@@ -4650,10 +4754,153 @@ function renderAccessoriesSection(container) {
   });
   
   container.appendChild(slotsContainer);
+
+  const scratchSection = document.createElement('div');
+  scratchSection.className = 'scratch-section';
+  scratchSection.innerHTML = `
+    <div class="scratch-header">
+      <h4>刮刮乐</h4>
+      <p class="scratch-hint">7 × 5 格子，翻出三个相同内容即可获得奖励并结束本局。</p>
+    </div>
+  `;
+
+  const scratchControls = document.createElement('div');
+  scratchControls.className = 'scratch-controls';
+
+  const startScratchBtn = document.createElement('button');
+  startScratchBtn.className = 'scratch-start-btn';
+  startScratchBtn.textContent = '消耗 1 金币开始刮刮乐';
+  scratchControls.appendChild(startScratchBtn);
+
+  const exchangeBtn = document.createElement('button');
+  exchangeBtn.className = 'scratch-exchange-btn';
+  exchangeBtn.textContent = '20 积分兑换 1 装备碎片';
+  scratchControls.appendChild(exchangeBtn);
+
+  scratchSection.appendChild(scratchControls);
+
+  const scratchStatus = document.createElement('div');
+  scratchStatus.className = 'scratch-status';
+  scratchStatus.textContent = '准备开始刮刮乐。';
+  scratchSection.appendChild(scratchStatus);
+
+  const scratchGrid = document.createElement('div');
+  scratchGrid.className = 'scratch-grid';
+  scratchSection.appendChild(scratchGrid);
+  container.appendChild(scratchSection);
+
+  const scratchState = {
+    active: false,
+    grid: [],
+    revealed: Array(SCRATCH_CELL_COUNT).fill(false),
+    counts: new Map()
+  };
+
+  function updateScratchButtons() {
+    startScratchBtn.disabled = scratchState.active || loadCoins() < 1;
+    exchangeBtn.disabled = loadPoints() < 20;
+  }
+
+  function updateCurrencyDisplay() {
+    coinCountEl.textContent = loadCoins();
+    pointsCountEl.textContent = loadPoints();
+    fragmentCountEl.textContent = loadFragments();
+    updateScratchButtons();
+  }
+
+  function endScratchRound(message) {
+    scratchState.active = false;
+    scratchStatus.textContent = message;
+    scratchGrid.querySelectorAll('.scratch-cell').forEach(cell => {
+      cell.disabled = true;
+      cell.classList.add('scratch-disabled');
+    });
+    updateScratchButtons();
+  }
+
+  function renderScratchGrid() {
+    scratchGrid.innerHTML = '';
+    scratchState.revealed = Array(scratchState.grid.length).fill(false);
+    scratchState.counts = new Map();
+
+    scratchState.grid.forEach((item, index) => {
+      const cell = document.createElement('button');
+      cell.className = 'scratch-cell';
+      cell.textContent = '刮';
+      cell.dataset.index = index;
+      scratchGrid.appendChild(cell);
+    });
+  }
+
+  scratchGrid.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLButtonElement)) {
+      return;
+    }
+    const index = Number(target.dataset.index);
+    if (!scratchState.active || scratchState.revealed[index]) {
+      return;
+    }
+
+    const item = scratchState.grid[index];
+    scratchState.revealed[index] = true;
+    target.classList.add('revealed');
+    if (item.type === 'empty') {
+      target.classList.add('scratch-empty');
+      target.textContent = '空';
+      scratchState.counts.set('empty', (scratchState.counts.get('empty') || 0) + 1);
+    } else {
+      target.classList.add('scratch-points');
+      target.textContent = `${item.value}`;
+      scratchState.counts.set(item.value, (scratchState.counts.get(item.value) || 0) + 1);
+    }
+
+    const winningKey = item.type === 'empty' ? 'empty' : item.value;
+    const count = scratchState.counts.get(winningKey) || 0;
+    if (count >= 3) {
+      if (item.type === 'empty') {
+        endScratchRound('本局结束：翻出 3 个空格，未获得奖励。');
+        showToast('刮刮乐结束：翻出 3 个空格。');
+      } else {
+        const newPoints = addPoints(item.value);
+        updateCurrencyDisplay();
+        endScratchRound(`本局结束：获得 ${item.value} 积分！`);
+        showToast(`刮刮乐奖励：获得 ${item.value} 积分（总计 ${newPoints} 积分）`);
+      }
+    }
+  });
+
+  startScratchBtn.addEventListener('click', () => {
+    const currentCoins = loadCoins();
+    if (currentCoins < 1) {
+      showToast('金币不足，无法开始刮刮乐。');
+      return;
+    }
+    saveCoins(currentCoins - 1);
+    scratchState.grid = generateScratchGrid();
+    scratchState.active = true;
+    scratchStatus.textContent = '刮刮乐进行中：翻出三个相同内容即可获得奖励。';
+    renderScratchGrid();
+    updateCurrencyDisplay();
+  });
+
+  exchangeBtn.addEventListener('click', () => {
+    const currentPoints = loadPoints();
+    if (currentPoints < 20) {
+      showToast('积分不足，无法兑换装备碎片。');
+      return;
+    }
+    savePoints(currentPoints - 20);
+    const newFragments = addFragments(1);
+    updateCurrencyDisplay();
+    showToast(`兑换成功：获得 1 装备碎片（总计 ${newFragments}）`);
+  });
+
+  updateScratchButtons();
   
   // Shop section
   const shopTitle = document.createElement('h4');
-  shopTitle.textContent = '可解锁配件';
+  shopTitle.textContent = '装备碎片兑换';
   shopTitle.style.marginTop = '24px';
   container.appendChild(shopTitle);
   
@@ -4669,7 +4916,7 @@ function renderAccessoriesSection(container) {
     
     card.innerHTML = `
       <div class="accessory-name">${acc.name}</div>
-      <div class="accessory-cost">💰 ${acc.cost} 币</div>
+      <div class="accessory-cost">🧩 ${acc.fragmentCost} 装备碎片</div>
       <div class="accessory-description">${acc.description}</div>
       ${!isUnlocked ? `<button class="unlock-btn" data-accessory="${acc.id}">解锁</button>` : '<div class="unlocked-badge">✓ 已解锁</div>'}
     `;
@@ -4684,17 +4931,17 @@ function renderAccessoriesSection(container) {
     btn.addEventListener('click', () => {
       const accessoryId = btn.dataset.accessory;
       const accessory = accessoryDefinitions[accessoryId];
-      const currentCoins = loadCoins();
+      const currentFragments = loadFragments();
       
-      if (currentCoins >= accessory.cost) {
-        saveCoins(currentCoins - accessory.cost);
+      if (currentFragments >= accessory.fragmentCost) {
+        saveFragments(currentFragments - accessory.fragmentCost);
         unlockAccessory(accessoryId);
         showToast(`解锁成功：${accessory.name}`);
         // Re-render the accessories section
         const activeChar = document.querySelector('.character-tab.active').dataset.character;
         renderCharacterSection('accessories', activeChar);
       } else {
-        showToast(`币数不足！需要 ${accessory.cost} 币，当前只有 ${currentCoins} 币`);
+        showToast(`装备碎片不足！需要 ${accessory.fragmentCost} 个，当前只有 ${currentFragments} 个`);
       }
     });
   });
