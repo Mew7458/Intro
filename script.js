@@ -4280,6 +4280,48 @@ const skillLibrary = {
   ]
 };
 
+const stageSkillExclusions = {
+  sevenSeas: {
+    adora: ['adora_blackflash_charge'],
+  },
+};
+
+function getAvailableSkillsForStage(stageId, characterId) {
+  const skills = skillLibrary[characterId] || [];
+  const excluded = stageSkillExclusions[stageId]?.[characterId] || [];
+  if (!excluded.length) return skills;
+  const excludedSet = new Set(excluded);
+  return skills.filter((skill) => !excludedSet.has(skill.id));
+}
+
+function pruneSelectedSkillsForStage(stageId, characterId, availableSkills) {
+  const availableIds = new Set(availableSkills.map((skill) => skill.id));
+  const selected = loadSelectedSkills();
+  const entry = selected[characterId];
+  if (!entry) return false;
+
+  let changed = false;
+  ['green', 'blue', 'pink', 'white', 'red', 'purple'].forEach((color) => {
+    if (entry[color] && !availableIds.has(entry[color])) {
+      entry[color] = null;
+      changed = true;
+    }
+  });
+
+  if (Array.isArray(entry.orange)) {
+    const nextOrange = entry.orange.map((id) => (id && availableIds.has(id) ? id : null));
+    if (nextOrange.some((id, index) => id !== entry.orange[index])) {
+      entry.orange = nextOrange;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    saveSelectedSkills(selected);
+  }
+  return changed;
+}
+
 const characterData = {
   adora: {
     name: 'Adora',
@@ -5112,8 +5154,12 @@ function setupAccessoriesDragDrop(container) {
 }
 
 function renderSkillSelectionSection(container, characterId) {
-  const selectedSkills = loadSelectedSkills();
-  const characterSkills = skillLibrary[characterId] || [];
+  let selectedSkills = loadSelectedSkills();
+  const stageId = currentStageId || 'intro';
+  const characterSkills = getAvailableSkillsForStage(stageId, characterId);
+  if (pruneSelectedSkillsForStage(stageId, characterId, characterSkills)) {
+    selectedSkills = loadSelectedSkills();
+  }
   
   // Header
   const header = document.createElement('div');
