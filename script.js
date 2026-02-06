@@ -4930,6 +4930,11 @@ function renderScratchSection(container) {
       <p class="scratch-hint">7 × 5 格子，翻出三个相同内容即可获得奖励并结束本局。</p>
     </div>
   `;
+  const scratchTemplate = document.getElementById('scratch-probability-template');
+  if (scratchTemplate instanceof HTMLTemplateElement) {
+    const templateContent = scratchTemplate.content.cloneNode(true);
+    scratchSection.appendChild(templateContent);
+  }
 
   const scratchControls = document.createElement('div');
   scratchControls.className = 'scratch-controls';

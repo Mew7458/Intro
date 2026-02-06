@@ -1823,6 +1823,37 @@ body {
   font-size: 13px;
 }
 
+.scratch-probability {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.scratch-probability h5 {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scratch-probability ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.scratch-probability li {
+  margin-bottom: 4px;
+}
+
+.scratch-note {
+  margin: 6px 0 0;
+  color: rgba(255, 255, 255, 0.6);
+}
+
 .scratch-controls {
   display: flex;
   flex-wrap: wrap;
