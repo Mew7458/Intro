@@ -318,16 +318,15 @@ function recordStageCompletion(stageId) {
   completions[stageId] = (completions[stageId] || 0) + 1;
   saveStageCompletions(completions);
   
-    const coinRewards = {
-      intro: 1,
-      firstHeresy: 2,
-      abandonedAnimals: 3,
-      bloodTowerPlan: 4,
-      fatigue: 5,
-      sevenSeas: 6,
-      zaiBattle: 7,
-    };
-    const coinsAwarded = coinRewards[stageId] ?? 1;
+  const coinRewards = {
+    intro: 1,
+    firstHeresy: 2,
+    abandonedAnimals: 3,
+    bloodTowerPlan: 4,
+    fatigue: 5,
+    sevenSeas: 6,
+  };
+  const coinsAwarded = coinRewards[stageId] ?? 1;
   const newTotal = addCoins(coinsAwarded);
   showToast(`完成关卡！获得 ${coinsAwarded} 币（总计: ${newTotal} 币）`);
   
