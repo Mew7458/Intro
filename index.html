@@ -268,6 +268,20 @@
       </div>
     </main>
 
+    <template id="scratch-probability-template">
+      <div class="scratch-probability">
+        <h5>奖励出现参考（加权估算）</h5>
+        <ul>
+          <li>1 币：最多 21 个（单格 65%）→ 币的权重占比</li>
+          <li>15 积分：最多 15 个（单格 60%）→ 积分权重更高</li>
+          <li>20 积分：最多 12 个（单格 60%）→ 积分权重更高</li>
+          <li>25 积分：最多 6 个（单格 50%）→ 积分权重更高</li>
+          <li>30 积分：最多 3 个（单格 40%）→ 积分权重更高</li>
+        </ul>
+        <p class="scratch-note">计算方式：权重 = 数量上限 × 单格概率；积分权重总和高于币。</p>
+      </div>
+    </template>
+
     <main class="screen screen-farpvp-player screen-farpvp-player1 screen-duo-player1" data-screen="farpvp-player1" aria-labelledby="farpvp-player1-title">
       <div class="screen-inner">
         <section class="farpvp-skill-board duo-skill-board" data-player="player1">

@@ -423,10 +423,17 @@ const SCRATCH_GRID_ROWS = 5;
 const SCRATCH_CELL_COUNT = SCRATCH_GRID_COLUMNS * SCRATCH_GRID_ROWS;
 const SCRATCH_EMPTY_CHANCE = 0.65;
 const SCRATCH_GUARANTEE_INTERVAL = 4;
-const SCRATCH_POINT_OPTIONS = [
-  { value: 1, max: 21, weight: 40 },
-  { value: 2, max: 18, weight: 30 }
+const SCRATCH_REWARD_OPTIONS = [
+  { type: 'coins', value: 1, max: 21, weight: 65 },
+  { type: 'points', value: 15, max: 15, weight: 60 },
+  { type: 'points', value: 20, max: 12, weight: 60 },
+  { type: 'points', value: 25, max: 6, weight: 50 },
+  { type: 'points', value: 30, max: 3, weight: 40 }
 ];
+
+function getScratchOptionKey(option) {
+  return `${option.type}:${option.value}`;
+}
 
 function getWeightedRandom(options) {
   const total = options.reduce((sum, option) => sum + option.weight, 0);
@@ -451,11 +458,11 @@ function shouldUseNoEmptyGrid() {
 function generateScratchGrid({ noEmpty = false } = {}) {
   const counts = new Map();
   const grid = [];
-  const guaranteed = SCRATCH_POINT_OPTIONS[Math.floor(Math.random() * SCRATCH_POINT_OPTIONS.length)];
-  counts.set(guaranteed.value, 3);
+  const guaranteed = getWeightedRandom(SCRATCH_REWARD_OPTIONS);
+  counts.set(getScratchOptionKey(guaranteed), 3);
 
   for (let i = 0; i < 3; i++) {
-    grid.push({ type: 'coins', value: guaranteed.value });
+    grid.push({ type: guaranteed.type, value: guaranteed.value });
   }
 
   while (grid.length < SCRATCH_CELL_COUNT) {
@@ -465,15 +472,18 @@ function generateScratchGrid({ noEmpty = false } = {}) {
       continue;
     }
 
-    const availableOptions = SCRATCH_POINT_OPTIONS.filter(option => (counts.get(option.value) || 0) < option.max);
+    const availableOptions = SCRATCH_REWARD_OPTIONS.filter(option => {
+      return (counts.get(getScratchOptionKey(option)) || 0) < option.max;
+    });
     if (availableOptions.length === 0) {
       grid.push({ type: 'empty', value: '空' });
       continue;
     }
 
     const picked = getWeightedRandom(availableOptions);
-    counts.set(picked.value, (counts.get(picked.value) || 0) + 1);
-    grid.push({ type: 'coins', value: picked.value });
+    const pickedKey = getScratchOptionKey(picked);
+    counts.set(pickedKey, (counts.get(pickedKey) || 0) + 1);
+    grid.push({ type: picked.type, value: picked.value });
   }
 
   for (let i = grid.length - 1; i > 0; i--) {
@@ -4930,6 +4940,11 @@ function renderScratchSection(container) {
       <p class="scratch-hint">7 × 5 格子，翻出三个相同内容即可获得奖励并结束本局。</p>
     </div>
   `;
+  const scratchTemplate = document.getElementById('scratch-probability-template');
+  if (scratchTemplate instanceof HTMLTemplateElement) {
+    const templateContent = scratchTemplate.content.cloneNode(true);
+    scratchSection.appendChild(templateContent);
+  }
 
   const scratchControls = document.createElement('div');
   scratchControls.className = 'scratch-controls';
@@ -5018,21 +5033,28 @@ function renderScratchSection(container) {
       scratchState.counts.set('empty', (scratchState.counts.get('empty') || 0) + 1);
     } else {
       target.classList.add('scratch-points');
-      target.textContent = `${item.value}币`;
-      scratchState.counts.set(item.value, (scratchState.counts.get(item.value) || 0) + 1);
+      const rewardLabel = item.type === 'coins' ? '币' : '积分';
+      target.textContent = `${item.value}${rewardLabel}`;
+      const rewardKey = `${item.type}:${item.value}`;
+      scratchState.counts.set(rewardKey, (scratchState.counts.get(rewardKey) || 0) + 1);
     }
 
-    const winningKey = item.type === 'empty' ? 'empty' : item.value;
+    const winningKey = item.type === 'empty' ? 'empty' : `${item.type}:${item.value}`;
     const count = scratchState.counts.get(winningKey) || 0;
     if (count >= 3) {
       if (item.type === 'empty') {
         endScratchRound('本局结束：翻出 3 个空格，未获得奖励。');
         showToast('刮刮乐结束：翻出 3 个空格。');
-      } else {
+      } else if (item.type === 'coins') {
         const newCoins = addCoins(item.value);
         updateCurrencyDisplay();
         endScratchRound(`本局结束：获得 ${item.value} 金币！`);
         showToast(`刮刮乐奖励：获得 ${item.value} 金币（总计 ${newCoins} 金币）`);
+      } else {
+        const newPoints = addPoints(item.value);
+        updateCurrencyDisplay();
+        endScratchRound(`本局结束：获得 ${item.value} 积分！`);
+        showToast(`刮刮乐奖励：获得 ${item.value} 积分（总计 ${newPoints} 积分）`);
       }
     }
   });
