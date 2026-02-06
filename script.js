@@ -424,11 +424,8 @@ const SCRATCH_CELL_COUNT = SCRATCH_GRID_COLUMNS * SCRATCH_GRID_ROWS;
 const SCRATCH_EMPTY_CHANCE = 0.65;
 const SCRATCH_GUARANTEE_INTERVAL = 4;
 const SCRATCH_POINT_OPTIONS = [
-  { value: 1, max: 21, weight: 21 },
-  { value: 15, max: 15, weight: 15 },
-  { value: 20, max: 12, weight: 12 },
-  { value: 25, max: 6, weight: 6 },
-  { value: 30, max: 3, weight: 3 }
+  { value: 1, max: 21, weight: 40 },
+  { value: 2, max: 18, weight: 30 }
 ];
 
 function getWeightedRandom(options) {
@@ -458,7 +455,7 @@ function generateScratchGrid({ noEmpty = false } = {}) {
   counts.set(guaranteed.value, 3);
 
   for (let i = 0; i < 3; i++) {
-    grid.push({ type: 'points', value: guaranteed.value });
+    grid.push({ type: 'coins', value: guaranteed.value });
   }
 
   while (grid.length < SCRATCH_CELL_COUNT) {
@@ -476,7 +473,7 @@ function generateScratchGrid({ noEmpty = false } = {}) {
 
     const picked = getWeightedRandom(availableOptions);
     counts.set(picked.value, (counts.get(picked.value) || 0) + 1);
-    grid.push({ type: 'points', value: picked.value });
+    grid.push({ type: 'coins', value: picked.value });
   }
 
   for (let i = grid.length - 1; i > 0; i--) {
@@ -5021,7 +5018,7 @@ function renderScratchSection(container) {
       scratchState.counts.set('empty', (scratchState.counts.get('empty') || 0) + 1);
     } else {
       target.classList.add('scratch-points');
-      target.textContent = `${item.value}`;
+      target.textContent = `${item.value}币`;
       scratchState.counts.set(item.value, (scratchState.counts.get(item.value) || 0) + 1);
     }
 
@@ -5032,10 +5029,10 @@ function renderScratchSection(container) {
         endScratchRound('本局结束：翻出 3 个空格，未获得奖励。');
         showToast('刮刮乐结束：翻出 3 个空格。');
       } else {
-        const newPoints = addPoints(item.value);
+        const newCoins = addCoins(item.value);
         updateCurrencyDisplay();
-        endScratchRound(`本局结束：获得 ${item.value} 积分！`);
-        showToast(`刮刮乐奖励：获得 ${item.value} 积分（总计 ${newPoints} 积分）`);
+        endScratchRound(`本局结束：获得 ${item.value} 金币！`);
+        showToast(`刮刮乐奖励：获得 ${item.value} 金币（总计 ${newCoins} 金币）`);
       }
     }
   });
