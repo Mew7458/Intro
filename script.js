@@ -4265,6 +4265,7 @@ const skillLibrary = {
     { id: 'karma_blood_grip', name: '嗜血之握', color: 'red', cost: '3步', description: '连续使用四次"沙包大的拳头"后可释放，对非Boss造成75伤害、小Boss 80、精英100，并立即处决对应目标。', probability: '30%', minLevel: 20 },
     { id: 'karma_deep_breath', name: '深呼吸', color: 'white', cost: '2步', description: '主动恢复全部SP与10HP；若当前技能卡池未使用该技能，则获得10%伤害加成（同一时间仅可存在1张）。', probability: '20%', minLevel: 25 },
     { id: 'karma_adrenaline', name: '肾上腺素', color: 'white', cost: '2步', description: '主动使用 - 给自己上一层鸡血并恢复自己15HP以及5SP，如果在目前所拥有技能池里没使用 - 每连续2次使用"沙包大的拳头"打到任意敌人则自动再次对最后打到的敌方单位使用两次"沙包大的拳头"（技能池里一次性只能有一个肾上腺素技能）。', probability: '20%', minLevel: 50 },
+    { id: 'karma_charge', name: '蓄力', color: 'orange', cost: '2步', description: '给自己上一层鸡血并进入蓄力状态（本回合无法移动或使用技能）。下回合开始消耗1层蓄力，30%概率获得额外技能“爆”（技能池一次性只能有一个）。', probability: '20%', minLevel: 50 },
     { id: 'karma_cataclysm', name: '天崩地裂', color: 'red', cost: '3步', description: '对周围2格内所有单位造成伤害：友方 10HP+5SP，敌方 25HP+10SP（相邻再+5HP）。', probability: '15%', minLevel: 50 }
   ],
   dario: [
