@@ -2970,7 +2970,7 @@ function buildSkillFactoriesForUnit(u){
       )}
     );
     F.push(
-      { key:'蓄力', prob:0.20, cond:()=>u.level>=50, make:()=> skill('蓄力',2,'orange','获得1层鸡血，本回合进入蓄力无法行动；下回合开始30%获得额外技能“爆”',
+      { key:'蓄力', prob:0.30, cond:()=>u.level>=50, make:()=> skill('蓄力',2,'orange','获得1层鸡血，本回合进入蓄力无法行动；下回合开始必定获得额外技能“爆”',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> karmaCharge(uu),
         {},
@@ -3772,9 +3772,7 @@ function processUnitsTurnStart(side){
 
     const baseId = u.id.replace('_p2', '');
     if(baseId === 'karma' && u.status.chargeStacks > 0){
-      if(Math.random() < 0.30){
-        grantKarmaBlastSkill(u);
-      }
+      grantKarmaBlastSkill(u);
       const nextCharge = Math.max(0, u.status.chargeStacks - 1);
       updateStatusStacks(u, 'chargeStacks', nextCharge, {label:'蓄力', type:'buff'});
       appendLog(`${u.name} 的“蓄力”消耗 1 层（剩余 ${nextCharge}）`);
