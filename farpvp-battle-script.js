@@ -2844,6 +2844,7 @@ if(u._spCrashVuln && (hpDmg>0 || spDmg>0)){
       updateStatusStacks(u, 'blastStacks', 0, {label:'爆裂', type:'debuff'});
       appendLog(`${u.name} 的爆裂被引爆（${stacks} 层）`);
       const cells = range_square_n(u, 1);
+      addTempClassToCells(cells, 'highlight-imp', IMPACT_MS);
       const seen = new Set();
       for(const c of cells){
         const tu = getUnitAt(c.r, c.c);
