@@ -44,6 +44,7 @@ function aiLog(u,msg){ if(DEBUG_AI) appendLog(`[AI] ${u.name}: ${msg}`); }
 const inventory = { pistol: false };
 
 let roundsPassed = 1;
+let turnIndex = 0;
 let playerBonusStepsNextTurn = 0;
 function computeBaseSteps(){
   // Round is 1-based: start with 3 steps at round 1, +1 each full round.
@@ -274,6 +275,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       tetanusStacks: 0,          // “破伤风”层数（回合开始造成真实伤害）
       tetanusTick: 0,            // 破伤风计数（每3回合衰减1层破伤风）
       lockedPreyId: null,        // “锁定猎物”目标 id
+      blastStacks: 0,            // “爆裂”Debuff 层数（被攻击时引爆）
+      chargeStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
     },
     dmgDone: 0,
     skillPool: [],
@@ -1595,6 +1598,8 @@ const SKILL_FX_CONFIG = {
   'karma:嗜血之握':         {type:'claw', primary:'#d95ffb', secondary:'#f0b8ff', scratches:3},
   'karma:深呼吸':           {type:'aura', primary:'#7ecfff', secondary:'#d7f1ff', glyph:'息'},
   'karma:肾上腺素':         {type:'aura', primary:'#ff8c69', secondary:'#ffd4c4', glyph:'💪'},
+  'karma:蓄力':             {type:'aura', primary:'#ffb347', secondary:'#ffe0b8', glyph:'蓄'},
+  'karma:爆':               {type:'burst', primary:'#ff4d4f', secondary:'#ffc5c5'},
   'haz:鱼叉穿刺':           {type:'beam', primary:'#5fd9ff', secondary:'#c5f2ff', glow:'rgba(255,255,255,0.8)', variant:'harpoon'},
   'haz:深海猎杀':           {type:'slash', primary:'#4ecdf2', secondary:'rgba(170,236,255,0.6)', spark:'#e3fbff', slashes:3, attack:{type:'swing', swings:3, spread:24, delayStep:36, variant:'wide', faceTarget:false}},
   'haz:猎神之叉':           {type:'slash', primary:'#ffe373', secondary:'rgba(255,233,152,0.7)', spark:'#fff6c4', slashes:2, attack:{type:'swing', swings:2, spread:22, delayStep:30, variant:'wide', faceTarget:false}},
@@ -1736,6 +1741,14 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   const value = next;
   u.status[key] = value;
   const diff = value - prev;
+  if(key === 'blastStacks'){
+    if(value > 0 && diff > 0){
+      u.status.blastAppliedTurn = turnIndex;
+    }
+    if(value <= 0){
+      delete u.status.blastAppliedTurn;
+    }
+  }
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
@@ -1748,6 +1761,24 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+function grantKarmaBlastSkill(u){
+  if(!u || u.hp<=0) return;
+  if((u.skillPool || []).some(sk=>sk && sk.name === '爆')) return;
+  const blast = skill(
+    '爆',
+    3,
+    'red',
+    '对所指方向2x3格造成50HP+10SP并叠1层爆裂（下一次友方攻击引爆：每层15HP，3x3范围）',
+    (uu,aimDir)=> aimDir ? forwardRectCentered(uu,aimDir,3,2) : (()=>{const a=[]; for(const d in DIRS) forwardRectCentered(uu,d,3,2).forEach(x=>a.push(x)); return a;})(),
+    (uu,desc)=> karmaBlast(uu, desc),
+    {aoe:true},
+    {castMs:900}
+  );
+  blast.meta = Object.assign({}, blast.meta || {}, {extraSkill:true});
+  u.skillPool = u.skillPool || [];
+  u.skillPool.push(blast);
+  appendLog(`${u.name} 获得额外技能：爆`);
 }
 function pulseCell(r,c){ const cell=getCellEl(r,c); if(!cell) return; cell.classList.add('pulse'); setTimeout(()=>cell.classList.remove('pulse'),620); }
 
@@ -2791,6 +2822,25 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     }
   }
 
+  if(sourceId){
+    const src = units[sourceId];
+    if(src && !opts.ignoreBlast && u.status && u.status.blastStacks > 0 && src.side !== u.side){
+      const stacks = u.status.blastStacks;
+      updateStatusStacks(u, 'blastStacks', 0, {label:'爆裂', type:'debuff'});
+      appendLog(`${u.name} 的爆裂被引爆（${stacks} 层）`);
+      const cells = range_square_n(u, 1);
+      addTempClassToCells(cells, 'highlight-imp', IMPACT_MS);
+      const seen = new Set();
+      for(const c of cells){
+        const tu = getUnitAt(c.r, c.c);
+        if(tu && !seen.has(tu.id)){
+          damageUnit(tu.id, stacks * 15, 0, `${u.name} 爆裂引爆波及 ${tu.name}`, src.id, {ignoreBlast:true});
+          seen.add(tu.id);
+        }
+      }
+    }
+  }
+
   handleSpCrashIfNeeded(u);
   checkHazComebackStatus();
 
@@ -3420,6 +3470,40 @@ function karmaAdrenaline(u){
   const adrenalineSkill = (u.skillPool || []).find(s => s && s.name === '肾上腺素');
   if(adrenalineSkill){ adrenalineSkill._used = true; }
 
+  unitActed(u);
+}
+function karmaCharge(u){
+  if(u.status.chargeStacks > 0){
+    appendLog(`${u.name} 已处于“蓄力”状态`);
+    return;
+  }
+  updateStatusStacks(u, 'jixueStacks', 1, {label:'鸡血', type:'buff'});
+  updateStatusStacks(u, 'chargeStacks', 1, {label:'蓄力', type:'buff'});
+  appendLog(`${u.name} 使用 蓄力：获得鸡血+1，本回合进入蓄力状态`);
+  showSkillFx('karma:蓄力', {target:u});
+  unitActed(u);
+}
+async function karmaBlast(u, desc){
+  const dir = (desc && desc.dir) ? desc.dir : u.facing;
+  const cells = forwardRectCentered(u, dir, 3, 2);
+  if(!cells.length){
+    appendLog('爆：前方没有可命中的区域');
+    unitActed(u);
+    return;
+  }
+  await telegraphThenImpact(cells);
+  const seen = new Set();
+  let hits = 0;
+  for(const c of cells){
+    const tu = getUnitAt(c.r, c.c);
+    if(tu && tu.side !== u.side && !seen.has(tu.id)){
+      damageUnit(tu.id, 50, 10, `${u.name} 爆 命中 ${tu.name}`, u.id, {skillFx:'karma:爆'});
+      addStatusStacks(tu, 'blastStacks', 1, {label:'爆裂', type:'debuff'});
+      seen.add(tu.id);
+      hits += 1;
+    }
+  }
+  appendLog(`${u.name} 使用 爆：命中 ${hits} 个单位`);
   unitActed(u);
 }
 
@@ -4806,7 +4890,8 @@ const skillKeyMapping = {
     'karma_listen': '都听你的',
     'karma_blood_grip': '嗜血之握',
     'karma_deep_breath': '深呼吸',
-    'karma_adrenaline': '肾上腺素'
+    'karma_adrenaline': '肾上腺素',
+    'karma_charge': '蓄力'
   },
   dario: {
     'dario_claw': '机械爪击',
@@ -5022,6 +5107,12 @@ function buildSkillFactoriesForUnit(u){
       { key:'肾上腺素', prob:0.20, cond:()=>u.level>=50 && !(u.skillPool||[]).some(s=>s.name==='肾上腺素'), make:()=> skill('肾上腺素',2,'white','主动：给自己上1层鸡血并恢复15HP和5SP。被动：每连续2次"沙包大的拳头"命中后自动再使用两次（技能池最多1张）',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> karmaAdrenaline(uu),
+        {},
+        {castMs:700}
+      )},
+      { key:'蓄力', prob:0.30, cond:()=>u.level>=50, make:()=> skill('蓄力',2,'orange','获得1层鸡血，本回合进入蓄力无法行动；下回合开始必定获得额外技能“爆”',
+        (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+        (uu)=> karmaCharge(uu),
         {},
         {castMs:700}
       )}
@@ -5712,6 +5803,8 @@ function summarizeNegatives(u){
   if(u.status.violenceStacks>0) parts.push(`暴力x${u.status.violenceStacks}`);
   if(u.status.painAmpStacks>0) parts.push(`痛觉放大x${u.status.painAmpStacks}`);
   if(u.status.tetanusStacks>0) parts.push(`破伤风x${u.status.tetanusStacks}`);
+  if(u.status.chargeStacks>0) parts.push(`蓄力x${u.status.chargeStacks}`);
+  if(u.status.blastStacks>0) parts.push(`爆裂x${u.status.blastStacks}`);
   if(u._spBroken) parts.push(`SP崩溃`);
   if(u._spCrashVuln) parts.push('SP崩溃易伤');
   if(hazMarkedTargetId && u.id === hazMarkedTargetId) parts.push('猎杀标记');
@@ -5764,6 +5857,7 @@ function updateStepsUI(){
 // —— 选中/瞄准 —— 
 function canUnitMove(u){
   if(!u) return false;
+  if(u.status && u.status.chargeStacks>0) return false;
   if(u._stanceType && u._stanceTurns>0) return false; // 姿态期间禁止移动
   return true;
 }
@@ -5851,6 +5945,11 @@ function discardSkill(u, sk){
 function handleSkillConfirmCell(u, sk, aimCell){
   if(interactionLocked || !u || u.hp<=0) return;
   if(!_skillSelection) return;
+
+  if(u.status && u.status.chargeStacks>0){
+    appendLog(`${u.name} 处于蓄力中，本回合无法使用技能`);
+    clearSkillAiming(); renderAll(); return;
+  }
 
   // Be tolerant to older skill objects where flags were stored in `estimate`
   const isMoveSkill = !!((sk.meta && sk.meta.moveSkill) || (sk.estimate && sk.estimate.moveSkill));
@@ -5953,6 +6052,7 @@ function onCellClick(r,c){
   if(sel.side==='enemy' && ENEMY_IS_AI_CONTROLLED){ appendLog('敌方单位由 AI 控制'); return; }
   if(sel.side!==currentSide){ appendLog('不是该单位的回合'); return; }
   if(sel.status.stunned){ appendLog(`${sel.name} 眩晕中，无法行动`); return; }
+  if(sel.status.chargeStacks>0){ appendLog(`${sel.name} 处于蓄力中，本回合无法移动`); return; }
   if(!canUnitMove(sel)){ appendLog(`${sel.name} 处于${sel._stanceType==='defense'?'防御姿态':'反伤姿态'}，本回合不能移动`); return; }
 
   const key=`${r},${c}`; if(!highlighted.has(key)) return;
@@ -6054,6 +6154,7 @@ function showSelected(u){
           if(!stepsOk){ appendLog('步数不足'); return; }
           if(u.status.stunned){ appendLog(`${u.name} 眩晕中`); return; }
           if(u.hp<=0){ appendLog(`${u.name} 已阵亡，无法行动`); return; }
+          if(u.status.chargeStacks>0){ appendLog(`${u.name} 处于蓄力中，本回合无法使用技能`); return; }
           if(sk.meta && sk.meta.moveSkill && !canUnitMove(u)){ appendLog(`${u.name} 处于姿态中，无法移动`); return; }
           startSkillAiming(u, sk);
         });
@@ -6179,9 +6280,17 @@ function applyLevelSuppression(){
   updateStepsUI();
 }
 function processUnitsTurnStart(side){
+  turnIndex += 1;
   applyParalysisAtTurnStart(side);
 
   const sideUnits = Object.values(units).filter(u=>u.hp>0 && u.side===side);
+
+  for(const u of sideUnits){
+    if(u.status && u.status.blastStacks > 0 && typeof u.status.blastAppliedTurn === 'number' && u.status.blastAppliedTurn < turnIndex){
+      updateStatusStacks(u, 'blastStacks', 0, {label:'爆裂', type:'debuff'});
+      appendLog(`${u.name} 的爆裂已消失`);
+    }
+  }
 
   // per-turn trackers
   for(const u of sideUnits){
@@ -6196,6 +6305,14 @@ function processUnitsTurnStart(side){
 
     const extraDraw = Math.max(0, u.turnsStarted);
     if(extraDraw>0) drawSkills(u, extraDraw);
+
+    const baseId = u.id.replace('_p2', '');
+    if(baseId === 'karma' && u.status.chargeStacks > 0){
+      grantKarmaBlastSkill(u);
+      const nextCharge = Math.max(0, u.status.chargeStacks - 1);
+      updateStatusStacks(u, 'chargeStacks', nextCharge, {label:'蓄力', type:'buff'});
+      appendLog(`${u.name} 的“蓄力”消耗 1 层（剩余 ${nextCharge}）`);
+    }
   }
 
   // stance ticking (Tusk etc.)
@@ -6832,6 +6949,7 @@ async function exhaustEnemySteps(){
       if(enemySteps<=0) break;
       if(!en || en.hp<=0) continue;
       if(en.status.stunned){ aiLog(en,'眩晕跳过'); continue; }
+      if(en.status.chargeStacks>0){ aiLog(en,'蓄力中跳过'); continue; }
       if(!en.dealtStart) ensureStartHand(en);
       if(en.id==='neyla' && en.oppression) ensureNeylaEndShadowGuarantee(en);
 
