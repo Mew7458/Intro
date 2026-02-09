@@ -44,6 +44,7 @@ function aiLog(u,msg){ if(DEBUG_AI) appendLog(`[AI] ${u.name}: ${msg}`); }
 const inventory = { pistol: false };
 
 let roundsPassed = 0;
+let turnIndex = 0;
 let playerBonusStepsNextTurn = 0;
 function computeBaseSteps(){ return Math.min(BASE_START_STEPS + roundsPassed, MAX_STEPS); }
 
@@ -1520,6 +1521,14 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   const value = next;
   u.status[key] = value;
   const diff = value - prev;
+  if(key === 'blastStacks'){
+    if(value > 0 && diff > 0){
+      u.status.blastAppliedTurn = turnIndex;
+    }
+    if(value <= 0){
+      delete u.status.blastAppliedTurn;
+    }
+  }
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
@@ -4546,6 +4555,16 @@ function applyLevelSuppression(){
   updateStepsUI();
 }
 function processUnitsTurnStart(side){
+  turnIndex += 1;
+  for(const id in units){
+    const u=units[id];
+    if(u.side!==side || u.hp<=0) continue;
+    if(u.status && u.status.blastStacks > 0 && typeof u.status.blastAppliedTurn === 'number' && u.status.blastAppliedTurn < turnIndex){
+      updateStatusStacks(u, 'blastStacks', 0, {label:'爆裂', type:'debuff'});
+      appendLog(`${u.name} 的爆裂已消失`);
+    }
+  }
+
   if(side==='enemy'){
     if(roundsPassed % 2 === 0){
       const haz = units['haz'];
