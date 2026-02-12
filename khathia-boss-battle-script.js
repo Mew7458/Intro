@@ -155,7 +155,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       agileStacks: 0,            // "灵活"Buff 层数（让敌方30%几率miss，miss消耗一层）
       affirmationStacks: 0,      // "肯定"Buff 层数（免疫一次SP伤害，多阶段攻击全阶段免疫，消耗一层）
       blastStacks: 0,            // “爆裂”Debuff 层数（被攻击时引爆）
-      chargeStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
+      chargeStacks: 0,
+      lifeDrainStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
     },
     dmgDone: 0,
     skillPool: [],
@@ -2255,6 +2256,9 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   showDamageFloat(u, finalHp, finalSp);
   pulseCell(u.r, u.c);
   if(died){ showDeathFx(u); }
+  if(source && source.side!==u.side && (finalHp>0 || finalSp>0)){
+    triggerLifeDrainOnHit(source);
+  }
 
   // 反伤姿态：反弹部分HP伤害
   if(sourceId && u._stanceType==='retaliate' && u._stanceTurns>0 && u._reflectPct>0 && !opts._reflected){
@@ -3116,6 +3120,78 @@ function getSelectedSkillKeysForUnit(u) {
   return selectedKeys.size > 0 ? selectedKeys : null;
 }
 
+
+function hasSkillInPool(u,name){
+  return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
+}
+
+function triggerLifeDrainOnHit(source){
+  if(!source || !source.status || !source.side) return;
+  const stacks = source.status.lifeDrainStacks || 0;
+  if(stacks <= 0) return;
+  const allies = Object.values(units).filter(u=>u && u.side===source.side && u.hp>0).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp));
+  const target = allies[0];
+  if(!target) return;
+  const before = target.hp;
+  target.hp = Math.min(target.maxHp, target.hp + 15);
+  updateStatusStacks(source, 'lifeDrainStacks', Math.max(0, stacks-1), {label:'小生命夺取', type:'buff'});
+  showGainFloat(target, target.hp-before, 0);
+  appendLog(`${source.name} 的“小生命夺取”触发：${target.name} 恢复 ${target.hp-before} HP`);
+}
+function grantBlackFlashRelease(u){
+  if(!u || u.hp<=0) return;
+  if((u.skillPool||[]).some(sk=>sk && sk.name==='黑瞬「释放」')) return;
+  const release = skill('黑瞬「释放」', 1, 'purple', '对所有敌方单位造成 15 SP 伤害（不受掩体）',
+    (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+    (uu)=>{
+      const enemies = Object.values(units).filter(t=>t.side!==uu.side && t.hp>0);
+      if(enemies.length===0){ appendLog('黑瞬「释放」：场上没有敌方单位'); unitActed(uu); return; }
+      for(const t of enemies){ damageUnit(t.id, 0, 15, `${uu.name} 黑瞬「释放」命中 ${t.name}`, uu.id, {ignoreCover:true}); }
+      appendLog(`${uu.name} 使用 黑瞬「释放」：敌方单位 SP 受损`);
+      unitActed(uu);
+    },
+    {aoe:true},
+    {castMs:700, extraSkill:true}
+  );
+  u.skillPool = u.skillPool || [];
+  u.skillPool.push(release);
+  appendLog(`${u.name} 获得额外技能：黑瞬「释放」`);
+}
+function adoraBlackFlashCharge(u){
+  grantBlackFlashRelease(u);
+  appendLog(`${u.name} 使用 黑瞬「充能」`);
+  unitActed(u);
+}
+function darioLifeDrain(u){
+  const next = addStatusStacks(u, 'lifeDrainStacks', 1, {label:'小生命夺取', type:'buff'});
+  appendLog(`${u.name} 使用 生命夺取：获得 小生命夺取（${next}）`);
+  unitActed(u);
+}
+async function karmaCataclysm(u){
+  const cells = inRadiusCells(u,2,{allowOccupied:true});
+  const targets = [];
+  const seen = new Set();
+  for(const c of cells){
+    const t = getUnitAt(c.r,c.c);
+    if(!t || t.hp<=0 || seen.has(t.id)) continue;
+    seen.add(t.id);
+    targets.push(t);
+  }
+  if(targets.length===0){ appendLog('天崩地裂：范围内没有目标'); unitActed(u); return; }
+  await telegraphThenImpact(cells);
+  appendLog(`${u.name} 使用 天崩地裂`);
+  for(const t of targets){
+    if(t.side===u.side){
+      damageUnit(t.id, 10, 5, `${u.name} 天崩地裂 波及 ${t.name}`, u.id);
+    }else{
+      const adjacent = mdist(u,t) <= 1;
+      const hpDmg = adjacent ? 30 : 25;
+      damageUnit(t.id, hpDmg, 10, `${u.name} 天崩地裂 命中 ${t.name}`, u.id);
+    }
+  }
+  unitActed(u);
+}
+
 function buildSkillFactoriesForUnit(u){
   const F=[];
   if(u.id==='adora'){
@@ -3348,6 +3424,32 @@ function buildSkillFactoriesForUnit(u){
     );
   }
   
+
+  if(u.id==='adora'){
+    F.push({ key:'黑瞬「充能」', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'黑瞬「释放」'), make:()=> skill('黑瞬「充能」',2,'purple','获得额外技能“黑瞬「释放」”',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> adoraBlackFlashCharge(uu),
+      {},
+      {castMs:700}
+    )});
+  }
+  if(u.id==='dario'){
+    F.push({ key:'生命夺取', prob:0.35, cond:()=>u.level>=50, make:()=> skill('生命夺取',1,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 15HP',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> darioLifeDrain(uu),
+      {},
+      {castMs:500}
+    )});
+  }
+  if(u.id==='karma'){
+    F.push({ key:'天崩地裂', prob:0.15, cond:()=>u.level>=50, make:()=> skill('天崩地裂',3,'red','周围2格内所有单位受击：友方 10HP+5SP，敌方 25HP+10SP（相邻再+5HP）',
+      (uu)=> inRadiusCells(uu,2,{allowOccupied:true}),
+      (uu)=> karmaCataclysm(uu),
+      {aoe:true},
+      {castMs:1200}
+    )});
+  }
+
   // Filter skills based on selection if character is level 50+
   const selectedKeys = getSelectedSkillKeysForUnit(u);
   if (selectedKeys) {
