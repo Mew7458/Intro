@@ -151,6 +151,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       resentStacks: 0,           // “怨念”层数（每回合-5%SP）
       agileStacks: 0,            // "灵活"Buff 层数（让敌方30%几率miss，miss消耗一层）
       affirmationStacks: 0,      // "肯定"Buff 层数（免疫一次SP伤害，多阶段攻击全阶段免疫，消耗一层）
+      blastStacks: 0,            // “爆裂”Debuff 层数（被攻击时引爆）
+      chargeStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
     },
     dmgDone: 0,
     skillPool: [],
@@ -1443,6 +1445,8 @@ const SKILL_FX_CONFIG = {
   'karma:嗜血之握':         {type:'claw', primary:'#d95ffb', secondary:'#f0b8ff', scratches:3},
   'karma:深呼吸':           {type:'aura', primary:'#7ecfff', secondary:'#d7f1ff', glyph:'息'},
   'karma:肾上腺素':         {type:'aura', primary:'#ff8c69', secondary:'#ffd4c4', glyph:'💪'},
+  'karma:蓄力':             {type:'aura', primary:'#ffb347', secondary:'#ffe0b8', glyph:'蓄'},
+  'karma:爆':               {type:'burst', primary:'#ff4d4f', secondary:'#ffc5c5'},
   'khathia:血肉之刃':       {type:'slash', primary:'#ff6f6f', secondary:'rgba(255,180,180,0.7)', spark:'#ffd6d6', slashes:2},
   'khathia:怨念之爪':       {type:'claw', primary:'#b168ff', secondary:'#e7d4ff', scratches:3},
   'khathia:蛮横横扫':       {type:'slash', primary:'#ff964f', secondary:'rgba(255,205,165,0.7)', spark:'#ffe7c8', slashes:3, attack:{type:'swing', swings:3, spread:28, delayStep:34, variant:'wide', faceTarget:false}},
@@ -1559,6 +1563,24 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+function grantKarmaBlastSkill(u){
+  if(!u || u.hp<=0) return;
+  if((u.skillPool || []).some(sk=>sk && sk.name === '爆')) return;
+  const blast = skill(
+    '爆',
+    3,
+    'red',
+    '对所指方向2x3格造成50HP+10SP并叠1层爆裂（下一次友方攻击引爆：每层15HP，3x3范围）',
+    (uu,aimDir)=> aimDir ? forwardRectCentered(uu,aimDir,3,2) : (()=>{const a=[]; for(const d in DIRS) forwardRectCentered(uu,d,3,2).forEach(x=>a.push(x)); return a;})(),
+    (uu,desc)=> karmaBlast(uu, desc),
+    {aoe:true},
+    {castMs:900}
+  );
+  blast.meta = Object.assign({}, blast.meta || {}, {extraSkill:true, karmaBlastExtra:true, grantedTurnsStarted:(u.turnsStarted||0)});
+  u.skillPool = u.skillPool || [];
+  u.skillPool.push(blast);
+  appendLog(`${u.name} 获得额外技能：爆`);
 }
 function pulseCell(r,c){ const cell=getCellEl(r,c); if(!cell) return; cell.classList.add('pulse'); setTimeout(()=>cell.classList.remove('pulse'),620); }
 function applyCameraTransform(){
@@ -2168,6 +2190,25 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     }
   }
 
+  if(sourceId){
+    const src = units[sourceId];
+    if(src && !opts.ignoreBlast && u.status && u.status.blastStacks > 0 && src.side !== u.side){
+      const stacks = u.status.blastStacks;
+      updateStatusStacks(u, 'blastStacks', 0, {label:'爆裂', type:'debuff'});
+      appendLog(`${u.name} 的爆裂被引爆（${stacks} 层）`);
+      const cells = range_square_n(u, 1);
+      addTempClassToCells(cells, 'highlight-imp', IMPACT_MS);
+      const seen = new Set();
+      for(const c of cells){
+        const tu = getUnitAt(c.r, c.c);
+        if(tu && !seen.has(tu.id)){
+          damageUnit(tu.id, stacks * 15, 0, `${u.name} 爆裂引爆波及 ${tu.name}`, src.id, {ignoreBlast:true});
+          seen.add(tu.id);
+        }
+      }
+    }
+  }
+
   handleSpCrashIfNeeded(u);
 
   renderAll();
@@ -2342,6 +2383,40 @@ function karmaAdrenaline(u){
   const adrenalineSkill = (u.skillPool || []).find(s => s && s.name === '肾上腺素');
   if(adrenalineSkill){ adrenalineSkill._used = true; }
 
+  unitActed(u);
+}
+function karmaCharge(u){
+  if(u.status.chargeStacks > 0){
+    appendLog(`${u.name} 已处于“蓄力”状态`);
+    return;
+  }
+  updateStatusStacks(u, 'jixueStacks', 1, {label:'鸡血', type:'buff'});
+  updateStatusStacks(u, 'chargeStacks', 1, {label:'蓄力', type:'buff'});
+  appendLog(`${u.name} 使用 蓄力：获得鸡血+1，本回合进入蓄力状态`);
+  showSkillFx('karma:蓄力', {target:u});
+  unitActed(u);
+}
+async function karmaBlast(u, desc){
+  const dir = (desc && desc.dir) ? desc.dir : u.facing;
+  const cells = forwardRectCentered(u, dir, 3, 2);
+  if(!cells.length){
+    appendLog('爆：前方没有可命中的区域');
+    unitActed(u);
+    return;
+  }
+  await telegraphThenImpact(cells);
+  const seen = new Set();
+  let hits = 0;
+  for(const c of cells){
+    const tu = getUnitAt(c.r, c.c);
+    if(tu && tu.side !== u.side && !seen.has(tu.id)){
+      damageUnit(tu.id, 50, 10, `${u.name} 爆 命中 ${tu.name}`, u.id, {skillFx:'karma:爆'});
+      addStatusStacks(tu, 'blastStacks', 1, {label:'爆裂', type:'debuff'});
+      seen.add(tu.id);
+      hits += 1;
+    }
+  }
+  appendLog(`${u.name} 使用 爆：命中 ${hits} 个单位`);
   unitActed(u);
 }
 function darioClaw(u,target){
@@ -2881,7 +2956,8 @@ const skillKeyMapping = {
     'karma_listen': '都听你的',
     'karma_blood_grip': '嗜血之握',
     'karma_deep_breath': '深呼吸',
-    'karma_adrenaline': '肾上腺素'
+    'karma_adrenaline': '肾上腺素',
+    'karma_charge': '蓄力'
   },
   dario: {
     'dario_claw': '机械爪击',
@@ -3097,6 +3173,12 @@ function buildSkillFactoriesForUnit(u){
       { key:'肾上腺素', prob:0.20, cond:()=>u.level>=50 && !(u.skillPool||[]).some(s=>s.name==='肾上腺素'), make:()=> skill('肾上腺素',2,'white','主动：给自己上1层鸡血并恢复15HP和5SP。被动：每连续2次"沙包大的拳头"命中后自动再使用两次（技能池最多1张）',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> karmaAdrenaline(uu),
+        {},
+        {castMs:700}
+      )},
+      { key:'蓄力', prob:0.30, cond:()=>u.level>=50, make:()=> skill('蓄力',2,'orange','获得1层鸡血，本回合进入蓄力无法行动；下回合开始必定获得额外技能“爆”',
+        (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+        (uu)=> karmaCharge(uu),
         {},
         {castMs:700}
       )}
@@ -3504,6 +3586,8 @@ function summarizeNegatives(u){
   if(u.status.resentStacks>0) parts.push(`怨念x${u.status.resentStacks}`);
   if(u.status.agileStacks>0) parts.push(`灵活x${u.status.agileStacks}`);
   if(u.status.affirmationStacks>0) parts.push(`肯定x${u.status.affirmationStacks}`);
+  if(u.status.chargeStacks>0) parts.push(`蓄力x${u.status.chargeStacks}`);
+  if(u.status.blastStacks>0) parts.push(`爆裂x${u.status.blastStacks}`);
   if(u.status.mockeryStacks>0) parts.push(`戏谑x${u.status.mockeryStacks}`);
   if(u.status.violenceStacks>0) parts.push(`暴力x${u.status.violenceStacks}`);
   if(u._spBroken) parts.push(`SP崩溃`);
@@ -3558,6 +3642,7 @@ function updateStepsUI(){
 function canUnitMove(u){
   if(!u) return false;
   if(u.status && u.status.stunned > 0) return false; // 眩晕期间禁止移动
+  if(u.status && u.status.chargeStacks>0) return false;
   if(u._stanceType && u._stanceTurns>0) return false; // 姿态期间禁止移动
   if(typeof u.maxMovePerTurn === 'number' && u.maxMovePerTurn >= 0){
     if((u.stepsMovedThisTurn||0) >= u.maxMovePerTurn) return false;
@@ -3649,6 +3734,11 @@ async function handleSkillConfirmCell(u, sk, aimCell){
   if(interactionLocked || !u || u.hp<=0) return;
   if(!_skillSelection) return;
 
+  if(u.status && u.status.chargeStacks>0){
+    appendLog(`${u.name} 处于蓄力中，本回合无法使用技能`);
+    clearSkillAiming(); renderAll(); return;
+  }
+
   if(sk.meta && sk.meta.moveSkill && !canUnitMove(u)){
     appendLog(`${u.name} 处于姿态中，无法进行任何移动`);
     clearSkillAiming(); renderAll(); return;
@@ -3727,6 +3817,7 @@ function onCellClick(r,c){
   if(sel.side==='enemy' && ENEMY_IS_AI_CONTROLLED){ appendLog('敌方单位由 AI 控制'); return; }
   if(sel.side!==currentSide){ appendLog('不是该单位的回合'); return; }
   if(sel.status.stunned){ appendLog(`${sel.name} 眩晕中，无法行动`); return; }
+  if(sel.status.chargeStacks>0){ appendLog(`${sel.name} 处于蓄力中，本回合无法移动`); return; }
   if(!canUnitMove(sel)){ appendLog(`${sel.name} 处于${sel._stanceType==='defense'?'防御姿态':'反伤姿态'}，本回合不能移动`); return; }
   // Khathia restriction: cannot move after casting a skill
   if(sel.id === 'khathia' && sel._usedSkillThisTurn){ 
@@ -3811,6 +3902,7 @@ function showSelected(u){
           if(!stepsOk){ appendLog('步数不足'); return; }
           if(u.status.stunned){ appendLog(`${u.name} 眩晕中`); return; }
           if(u.hp<=0){ appendLog(`${u.name} 已阵亡，无法行动`); return; }
+          if(u.status.chargeStacks>0){ appendLog(`${u.name} 处于蓄力中，本回合无法使用技能`); return; }
           if(sk.meta && sk.meta.moveSkill && !canUnitMove(u)){ appendLog(`${u.name} 处于姿态中，无法移动`); return; }
           // Khathia restriction: cannot cast skill after moving
           if(u.id === 'khathia' && u.stepsMovedThisTurn > 0){
@@ -3938,6 +4030,13 @@ function processUnitsTurnStart(side){
 
     u.actionsThisTurn = 0;
     u.turnsStarted = (u.turnsStarted||0) + 1;
+    if(Array.isArray(u.skillPool) && u.skillPool.length){
+      const beforeBlastCards = u.skillPool.length;
+      u.skillPool = u.skillPool.filter(sk=> !(sk && sk.meta && sk.meta.karmaBlastExtra && Number(sk.meta.grantedTurnsStarted||0) < Number(u.turnsStarted||0)));
+      if(u.skillPool.length < beforeBlastCards){
+        appendLog(`${u.name} 的额外技能“爆”已过期并消失`);
+      }
+    }
     u.stepsMovedThisTurn = 0;
     u._designPenaltyTriggered = false;
     u._usedSkillThisTurn = false;
@@ -3954,6 +4053,14 @@ function processUnitsTurnStart(side){
 
     const extraDraw = Math.max(0, u.turnsStarted);
     if(extraDraw>0) drawSkills(u, extraDraw);
+
+    const baseId = u.id.replace('_p2', '');
+    if(baseId === 'karma' && u.status.chargeStacks > 0){
+      grantKarmaBlastSkill(u);
+      const nextCharge = Math.max(0, u.status.chargeStacks - 1);
+      updateStatusStacks(u, 'chargeStacks', nextCharge, {label:'蓄力', type:'buff'});
+      appendLog(`${u.name} 的“蓄力”消耗 1 层（剩余 ${nextCharge}）`);
+    }
 
     if(u._stanceType && u._stanceTurns>0){
       if(u._stanceSpPerTurn>0){
@@ -4358,6 +4465,7 @@ async function exhaustEnemySteps(){
       if(enemySteps<=0) break;
       if(!en || en.hp<=0) continue;
       if(en.status.stunned){ aiLog(en,'眩晕跳过'); continue; }
+      if(en.status.chargeStacks>0){ aiLog(en,'蓄力中跳过'); continue; }
       if(!en.dealtStart) ensureStartHand(en);
       // 1) 尝试技能
       let didAct = false;
