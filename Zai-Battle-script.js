@@ -5055,7 +5055,7 @@ function triggerLifeDrainOnHit(source){
   const target = allies[0];
   if(!target) return;
   const before = target.hp;
-  target.hp = Math.min(target.maxHp, target.hp + 15);
+  target.hp = Math.min(target.maxHp, target.hp + 10);
   updateStatusStacks(source, 'lifeDrainStacks', Math.max(0, stacks-1), {label:'小生命夺取', type:'buff'});
   showGainFloat(target, target.hp-before, 0);
   appendLog(`${source.name} 的“小生命夺取”触发：${target.name} 恢复 ${target.hp-before} HP`);
@@ -5596,7 +5596,7 @@ function buildSkillFactoriesForUnit(u){
     )});
   }
   if(u.id==='dario'){
-    F.push({ key:'生命夺取', prob:0.35, cond:()=>u.level>=50, make:()=> skill('生命夺取',1,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 15HP',
+    F.push({ key:'生命夺取', prob:0.35, cond:()=>true, make:()=> skill('生命夺取',0,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 10HP',
       (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
       (uu)=> darioLifeDrain(uu),
       {},
