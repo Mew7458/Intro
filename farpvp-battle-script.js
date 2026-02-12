@@ -1783,7 +1783,23 @@ function normalizeBleedState(u){
     .map(v=>Math.max(1, Math.floor(Number(v)||0)))
     .filter(v=>v>0);
   const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
-  while(u.status.bleedStrengthQueue.length < layerCount) u.status.bleedStrengthQueue.push(1);
+  const declaredStrength = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+  let queueSum = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+  if(u.status.bleedStrengthQueue.length < layerCount){
+    const missing = layerCount - u.status.bleedStrengthQueue.length;
+    const remain = Math.max(0, declaredStrength - queueSum);
+    if(remain > 0){
+      let left = remain;
+      for(let i=0; i<missing; i++){
+        const slotsLeft = missing - i;
+        const alloc = (slotsLeft===1) ? left : Math.max(1, Math.floor(left / slotsLeft));
+        u.status.bleedStrengthQueue.push(Math.max(1, alloc));
+        left -= alloc;
+      }
+    }else{
+      for(let i=0; i<missing; i++) u.status.bleedStrengthQueue.push(1);
+    }
+  }
   if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
   u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
 }
@@ -5644,9 +5660,11 @@ function processUnitsTurnStart(side){
     if(u.status.bleed && u.status.bleed>0){
       normalizeBleedState(u);
       const bleedLayersBefore = u.status.bleed;
-      const currentLayerStrength = Math.max(1, Number((u.status.bleedStrengthQueue||[])[0] || 1));
-      const bleedDmg = Math.max(1, currentLayerStrength * 5);
-      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损（本层强度${currentLayerStrength}）`, null);
+      const bleedStrengthBefore = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+      const bleedDmg = Math.max(0, bleedStrengthBefore * 5);
+      if(bleedDmg > 0){
+        damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损（流血强度${bleedStrengthBefore}）`, null, {trueDamage:true});
+      }
       if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
       const bleedLayersAfter = Math.max(0, bleedLayersBefore - 1);
       updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
