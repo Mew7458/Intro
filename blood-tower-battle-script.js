@@ -2060,6 +2060,47 @@ function calcOutgoingDamage(attacker, baseDmg, target, skillName){
   }
   return dmg;
 }
+
+function getBaseArmorForUnit(u){
+  if(!u) return 0;
+  const rawName = String(u.name || '').replace(/（虚影）/g, '').trim();
+  const name = rawName.startsWith('Velmira') ? 'Velmira' : rawName;
+  if(name === 'Adora') return 10 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Dario') return 15 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Karma') return 15 + Math.max(0, (u.level||0) - 20);
+  const fixedArmor = {
+    'Haz': 40,
+    'Katz': 30,
+    'Tusk': 40,
+    'Neyla': 10,
+    'Kyn': 20,
+    '宰': 50,
+    'Velmira': 60,
+    'Khathia': 40,
+    'Lirathe': 50,
+    '刑警队员': 0,
+    '雏形赫雷西成员': 10,
+    '法形赫雷西成员': 10,
+    '刺形赫雷西成员': 10,
+    '赫雷西初代精英成员': 20,
+    '组装型进阶赫雷西成员（赫雷西成员B）': 30,
+  };
+  return fixedArmor[name] ?? 0;
+}
+function getLevelArmorBonus(u){
+  if(!u || !u.side) return 0;
+  const myTeam = Object.values(units).filter(x=>x && x.side===u.side && x.hp>0);
+  const oppTeam = Object.values(units).filter(x=>x && x.side!==u.side && x.hp>0);
+  if(myTeam.length===0 || oppTeam.length===0) return 0;
+  const myAvg = Math.floor(myTeam.reduce((s,x)=>s+(x.level||0),0) / myTeam.length);
+  const oppAvg = Math.floor(oppTeam.reduce((s,x)=>s+(x.level||0),0) / oppTeam.length);
+  if(myAvg <= oppAvg) return 0;
+  return Math.max(0, (u.level||0) - oppAvg) * 5;
+}
+function getTotalArmorForUnit(u){
+  return Math.max(0, getBaseArmorForUnit(u) + getLevelArmorBonus(u));
+}
+
 function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const u = units[id]; if(!u || u.hp<=0) return;
 
