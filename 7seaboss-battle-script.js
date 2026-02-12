@@ -2874,8 +2874,8 @@ async function haz_GodFork(u, target){
   if(Math.random()<0.5){ dmg = Math.round(dmg*2.0); appendLog('猎神之叉 暴怒加成 x2.0'); }
   cameraFocusOnCell(target.r, target.c);
   damageUnit(target.id, dmg, 15, `${u.name} 猎神之叉 重击 ${target.name}`, u.id,{skillFx:'haz:猎神之叉'});
-  const bleedStacks = addBleed(target, 1, 3);
-  appendLog(`${target.name} 附加 1层流血（3层流血强度），当前流血层数 -> ${bleedStacks}`);
+  const bleedStacks = addBleed(target, 1, 1);
+  appendLog(`${target.name} 附加 1层流血，当前流血层数 -> ${bleedStacks}`);
   if(!hazMarkedTargetId){ hazMarkedTargetId = target.id; appendLog(`猎杀标记：${target.name} 被标记，七海对其伤害 +15%`); }
   u.dmgDone += dmg; unitActed(u);
 }
@@ -3139,7 +3139,7 @@ async function neyla_PierceSnipe(u, desc){
     const tu=getUnitAt(c.r,c.c);
     if(tu && tu.side!=='enemy' && !set.has(tu.id)){
       damageUnit(tu.id,30,0,`${u.name} 穿刺狙击 命中 ${tu.name}`, u.id,{skillFx:'neyla:穿刺狙击'});
-      addBleed(tu, 2, 2);
+      addBleed(tu, 2, 1);
       set.add(tu.id); hits++;
     }
   }
@@ -3682,9 +3682,9 @@ function buildSkillFactoriesForUnit(u){
           {},
           {castMs:1200}
         )},
-        { key:'怨念滋生', prob:0.33, cond:()=>true, make:()=> skill('怨念滋生',1,'green','全图：对被猎杀标记目标 施加1层流血（5层强度）+1恐惧',
+        { key:'怨念滋生', prob:0.33, cond:()=>true, make:()=> skill('怨念滋生',1,'green','全图：对被猎杀标记目标 施加1层流血+1恐惧',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
-        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addBleed(t,1,5); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血（5层强度）与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
+        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addBleed(t,1,1); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
           {},
           {castMs:800}
         )},
@@ -3793,7 +3793,7 @@ function buildSkillFactoriesForUnit(u){
           {aoe:false},
           {cellTargeting:true, castMs:1100}
         )},
-        { key:'穿刺狙击', prob:0.60, cond:()=>true, make:()=> skill('穿刺狙击',2,'red','直线6格 穿透 30HP +2层流血（每层2强度）',
+        { key:'穿刺狙击', prob:0.60, cond:()=>true, make:()=> skill('穿刺狙击',2,'red','直线6格 穿透 30HP +2层流血',
           (uu,aimDir)=> aimDir? range_forward_n(uu,6,aimDir) : (()=>{const a=[]; for(const d in DIRS) range_forward_n(uu,6,d).forEach(x=>a.push(x)); return a;})(),
           (uu,desc)=> neyla_PierceSnipe(uu,desc),
           {aoe:true},

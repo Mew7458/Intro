@@ -360,6 +360,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       stunned: 0,
       paralyzed: 0,
       bleed: 0,
+      bleedStrength: 0,
+      bleedStrengthQueue: [],
       recoverStacks: 0,          // “恢复”Buff 层数（每大回合开始消耗一层，+5HP）
       jixueStacks: 0,            // “鸡血”Buff 层数（下一次攻击伤害x2）
       dependStacks: 0,           // “依赖”Buff 层数（下一次攻击真实伤害，结算后清空自身SP）
@@ -1705,6 +1707,9 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
+  if(key === 'bleed'){
+    setBleedStacksDirect(u, value);
+  }
   if(key === 'stunned'){
     refreshSpCrashVulnerability(u);
   }
@@ -1714,6 +1719,45 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+
+function normalizeBleedState(u){
+  if(!u || !u.status) return;
+  if(!Array.isArray(u.status.bleedStrengthQueue)) u.status.bleedStrengthQueue = [];
+  u.status.bleedStrengthQueue = u.status.bleedStrengthQueue
+    .map(v=>Math.max(1, Math.floor(Number(v)||0)))
+    .filter(v=>v>0);
+  const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
+  while(u.status.bleedStrengthQueue.length < layerCount) u.status.bleedStrengthQueue.push(1);
+  if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function setBleedStacksDirect(u, layers){
+  if(!u || !u.status) return;
+  const nextLayers = Math.max(0, Math.floor(Number(layers)||0));
+  normalizeBleedState(u);
+  if(nextLayers === 0){
+    u.status.bleed = 0;
+    u.status.bleedStrengthQueue = [];
+    u.status.bleedStrength = 0;
+    return;
+  }
+  if(nextLayers < u.status.bleedStrengthQueue.length) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0,nextLayers);
+  while(u.status.bleedStrengthQueue.length < nextLayers) u.status.bleedStrengthQueue.push(1);
+  u.status.bleed = nextLayers;
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function addBleed(u, layers=1, strengthPerLayer=1){
+  if(!u || !u.status || layers<=0) return u && u.status ? (u.status.bleed||0) : 0;
+  const addLayers = Math.max(0, Math.floor(Number(layers)||0));
+  const perLayer = Math.max(1, Math.floor(Number(strengthPerLayer)||0));
+  if(addLayers<=0) return u.status.bleed||0;
+  normalizeBleedState(u);
+  for(let i=0;i<addLayers;i++) u.status.bleedStrengthQueue.push(perLayer);
+  u.status.bleed = (u.status.bleed||0) + addLayers;
+  u.status.bleedStrength = (u.status.bleedStrength||0) + addLayers * perLayer;
+  updateStatusStacks(u,'bleed',u.status.bleed,{label:'流血', type:'debuff'});
+  return u.status.bleed;
 }
 function grantKarmaBlastSkill(u){
   if(!u || u.hp<=0) return;
@@ -2684,7 +2728,7 @@ function officerCollectTargets(cells){
 // Helper function: apply bleed stacks
 function applyBleed(target, layers=1){
   if(!target || target.hp<=0) return 0;
-  const stacks = addStatusStacks(target,'bleed', layers,{label:'流血', type:'debuff'});
+  const stacks = addBleed(target, layers, 1);
   appendLog(`${target.name} 流血层数 -> ${stacks}`);
   return stacks;
 }
@@ -3343,7 +3387,7 @@ function summarizeNegatives(u){
   if(u._staggerStacks && (u.stunThreshold||1)>1) parts.push(`叠层${u._staggerStacks}/${u.stunThreshold}`);
   if(u.status.stunned>0) parts.push(`眩晕x${u.status.stunned}`);
   if(u.status.paralyzed>0) parts.push(`恐惧x${u.status.paralyzed}`);
-  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}`);
+  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}(强度${u.status.bleedStrength||0})`);
   if(u.status.recoverStacks>0) parts.push(`恢复x${u.status.recoverStacks}`);
   if(u.status.jixueStacks>0) parts.push(`鸡血x${u.status.jixueStacks}`);
   if(u.status.dependStacks>0) parts.push(`依赖x${u.status.dependStacks}`);
@@ -3781,9 +3825,15 @@ function processUnitsTurnStart(side){
     }
 
     if(u.status.bleed && u.status.bleed>0){
-      const bleedDmg = Math.max(1, Math.floor(u.maxHp*0.05));
-      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损`, null);
-      u.status.bleed = Math.max(0, u.status.bleed-1);
+      normalizeBleedState(u);
+      const bleedLayersBefore = u.status.bleed;
+      const currentLayerStrength = Math.max(1, Number((u.status.bleedStrengthQueue||[])[0] || 1));
+      const bleedDmg = Math.max(1, currentLayerStrength * 5);
+      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损（本层强度${currentLayerStrength}）`, null);
+      if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
+      const bleedLayersAfter = Math.max(0, bleedLayersBefore - 1);
+      updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
+      u.status.bleedStrength = (u.status.bleedStrengthQueue||[]).reduce((sum,v)=>sum+v,0);
     }
 
     if(u.status.resentStacks && u.status.resentStacks>0){

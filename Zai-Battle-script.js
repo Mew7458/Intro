@@ -263,6 +263,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       stunned: 0,
       paralyzed: 0,
       bleed: 0,
+      bleedStrength: 0,
+      bleedStrengthQueue: [],
       hazBleedTurns: 0,
       recoverStacks: 0,          // “恢复”Buff 层数（每大回合开始消耗一层，+5HP）
       jixueStacks: 0,            // “鸡血”Buff 层数（下一次攻击伤害x2）
@@ -1752,6 +1754,9 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
+  if(key === 'bleed'){
+    setBleedStacksDirect(u, value);
+  }
   if(key === 'stunned'){
     refreshSpCrashVulnerability(u);
   }
@@ -1761,6 +1766,45 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+
+function normalizeBleedState(u){
+  if(!u || !u.status) return;
+  if(!Array.isArray(u.status.bleedStrengthQueue)) u.status.bleedStrengthQueue = [];
+  u.status.bleedStrengthQueue = u.status.bleedStrengthQueue
+    .map(v=>Math.max(1, Math.floor(Number(v)||0)))
+    .filter(v=>v>0);
+  const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
+  while(u.status.bleedStrengthQueue.length < layerCount) u.status.bleedStrengthQueue.push(1);
+  if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function setBleedStacksDirect(u, layers){
+  if(!u || !u.status) return;
+  const nextLayers = Math.max(0, Math.floor(Number(layers)||0));
+  normalizeBleedState(u);
+  if(nextLayers === 0){
+    u.status.bleed = 0;
+    u.status.bleedStrengthQueue = [];
+    u.status.bleedStrength = 0;
+    return;
+  }
+  if(nextLayers < u.status.bleedStrengthQueue.length) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0,nextLayers);
+  while(u.status.bleedStrengthQueue.length < nextLayers) u.status.bleedStrengthQueue.push(1);
+  u.status.bleed = nextLayers;
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function addBleed(u, layers=1, strengthPerLayer=1){
+  if(!u || !u.status || layers<=0) return u && u.status ? (u.status.bleed||0) : 0;
+  const addLayers = Math.max(0, Math.floor(Number(layers)||0));
+  const perLayer = Math.max(1, Math.floor(Number(strengthPerLayer)||0));
+  if(addLayers<=0) return u.status.bleed||0;
+  normalizeBleedState(u);
+  for(let i=0;i<addLayers;i++) u.status.bleedStrengthQueue.push(perLayer);
+  u.status.bleed = (u.status.bleed||0) + addLayers;
+  u.status.bleedStrength = (u.status.bleedStrength||0) + addLayers * perLayer;
+  updateStatusStacks(u,'bleed',u.status.bleed,{label:'流血', type:'debuff'});
+  return u.status.bleed;
 }
 function grantKarmaBlastSkill(u){
   if(!u || u.hp<=0) return;
@@ -2805,9 +2849,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     if(src && src.side === "player" && (finalHp>0 || finalSp>0)){
       const equipped = loadEquippedAccessories();
       if(equipped[src.id] === "tetanus"){
-        const currentBleed = u.status.bleed || 0;
-        u.status.bleed = currentBleed + 1;
-        updateStatusStacks(u, "bleed", u.status.bleed, { label: "流血", type: "debuff" });
+        addBleed(u, 1, 1);
           addStatusStacks(u, "resentStacks", 1, { label: "怨念", type: "debuff" });
         appendLog(`${src.name} 的"破伤风之刃"：${u.name} +1 流血 +1 怨念`);
       }
@@ -3049,7 +3091,7 @@ function darioTearWound(u, target){
   u.dmgDone += finalDmg;
 
   const bleedStacks = isFullHp ? 1 : 2;
-  addStatusStacks(target, 'bleed', bleedStacks, {label:'流血', type:'debuff'});
+  addBleed(target, bleedStacks, 1);
   appendLog(`${target.name} 附加 流血+${bleedStacks}`);
 
   setTimeout(() => {
@@ -3067,7 +3109,7 @@ function darioStatusRecovery(u, aim){
   const clearedEffects = [];
   if(t.status.stunned > 0){ clearedEffects.push('眩晕'); t.status.stunned = 0; }
   if(t.status.paralyzed > 0){ clearedEffects.push('恐惧'); t.status.paralyzed = 0; }
-  if(t.status.bleed > 0){ clearedEffects.push('流血'); t.status.bleed = 0; }
+  if(t.status.bleed > 0){ clearedEffects.push('流血'); setBleedStacksDirect(t, 0); }
   if(t.status.hazBleedTurns > 0){ clearedEffects.push('Haz流血'); t.status.hazBleedTurns = 0; }
 
   const spBefore = t.sp;
@@ -3128,7 +3170,7 @@ async function adoraAssassination(u, target){
     const dmg2 = calcOutgoingDamage(u, 5, target, '课本知识：刺杀一');
     damageUnit(target.id, dmg2, 5, `${u.name} 拔出匕首 ${target.name}`, u.id, {skillFx:'adora:课本知识：刺杀一'});
     u.dmgDone += dmg2;
-    const bleedStacks = addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'});
+    const bleedStacks = addBleed(target, 1, 1);
     appendLog(`${target.name} 流血层数 -> ${bleedStacks}`);
   }
   
@@ -3555,8 +3597,8 @@ async function haz_GodFork(u, target){
   cameraFocusOnCell(target.r, target.c);
   damageUnit(target.id, dmg, 15, `${u.name} 猎神之叉 重击 ${target.name}`, u.id,{skillFx:'haz:猎神之叉'});
   const bleedStacks = Math.max(target.status.bleed||0, 2);
-  updateStatusStacks(target,'bleed', bleedStacks,{label:'流血', type:'debuff'});
-  appendLog(`${target.name} 附加流血（2回合，每回合 -5%最大HP）`);
+  addBleed(target, 1, 1);
+  appendLog(`${target.name} 附加流血（当前规则：每回合消耗1层，本层强度×5HP）`);
   if(!hazMarkedTargetId){ hazMarkedTargetId = target.id; appendLog(`猎杀标记：${target.name} 被标记，七海对其伤害 +15%`); }
   u.dmgDone += dmg; unitActed(u);
 }
@@ -3839,7 +3881,7 @@ async function neyla_PierceSnipe(u, desc){
     if(tu && tu.side!==u.side && !set.has(tu.id)){
       damageUnit(tu.id,30,0,`${u.name} 穿刺狙击 命中 ${tu.name}`, u.id,{ignoreCover:true, skillFx:'neyla:穿刺狙击'});
       const bleedNext = Math.max(tu.status.bleed||0, 2);
-      updateStatusStacks(tu,'bleed', bleedNext,{label:'流血', type:'debuff'});
+      addBleed(tu, 1, 1);
       set.add(tu.id); hits++;
     }
   }
@@ -4040,7 +4082,7 @@ async function zai_CatchMe(u, target){
   const dmg3 = calcOutgoingDamage(u, 25, target, '他妈来抓老子啊');
   damageUnit(target.id, dmg3, 5, `${u.name} 他妈来抓老子啊·上斩`, u.id);
   u.dmgDone += dmg3;
-  addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'});
+  addBleed(target, 1, 1);
   await sleep(180);
 
   // 4) below
@@ -4110,7 +4152,7 @@ async function zai_CleavingFrenzy(u, payload){
   };
 
   // 1) 刺击：10HP +5SP +1流血
-  if(!await hit(10, 5, '刺击', 'RedCut', ()=> addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'}), 150)){
+  if(!await hit(10, 5, '刺击', 'RedCut', ()=> addBleed(target, 1, 1), 150)){
     unitActed(u);
     return;
   }
@@ -4120,7 +4162,7 @@ async function zai_CleavingFrenzy(u, payload){
     return;
   }
   // 3) 连斩二：15HP +0SP +1流血
-  if(!await hit(15, 0, '连斩二', (Math.random()<0.5?'BloodSlash':'RedCut'), ()=> addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'}), 150)){
+  if(!await hit(15, 0, '连斩二', (Math.random()<0.5?'BloodSlash':'RedCut'), ()=> addBleed(target, 1, 1), 150)){
     unitActed(u);
     return;
   }
@@ -4308,7 +4350,7 @@ async function zai_BloodStar(u){
     // no camera shake here; only final hit should shake (per request)
     await stepHit(15, 1, '非正式血星鬼斩裂·连斩', {floor10:true, shake:false, fxName: fx});
 
-    if(i % 3 === 0){ for(const t of getEnemies()) addStatusStacks(t, 'bleed', 1, {label:'流血', type:'debuff'}); }
+    if(i % 3 === 0){ for(const t of getEnemies()) addBleed(t, 1, 1); }
     if(i % 5 === 0){ for(const t of getEnemies()) zaiApplyTetanus(t, 1); }
     if(i % 10 === 0){ for(const t of getEnemies()) zaiApplyPainAmp(t, 1); }
 
@@ -4333,7 +4375,7 @@ async function zai_BloodStar(u){
       starChain = starChain.then(async () => {
         await stepHit(35, 5, '非正式血星鬼斩裂·五角星', {floor10:true, shake:false});
         for(const t of getEnemies()){
-          addStatusStacks(t, 'bleed', 1, {label:'流血', type:'debuff'});
+          addBleed(t, 1, 1);
           zaiApplyTetanus(t, 1);
         }
         await sleep(40);
@@ -4354,7 +4396,7 @@ async function zai_BloodStar(u){
           const actualHp = (res && typeof res.hp === 'number') ? res.hp : 0;
           finalHits.push({t, hp: actualHp});
           u.dmgDone += actualHp;
-          addStatusStacks(t, 'bleed', 5, {label:'流血', type:'debuff'});
+          addBleed(t, 5, 1);
           zaiApplyTetanus(t, 1);
           zaiApplyPainAmp(t, 1);
         }
@@ -4587,7 +4629,7 @@ function zaiApplyBitePenalty(zai){
     ignoreDepend: true,
     ignoreTuskWall: true,
   });
-  addStatusStacks(zai, 'bleed', 5, {label:'流血', type:'debuff'});
+  addBleed(zai, 5, 1);
   renderAll();
 }
 async function zai_BrutalBite(zai){
@@ -4632,7 +4674,7 @@ async function zai_BrutalBite(zai){
   syncSpBroken(target);
   showDamageFloat(target, 0, spLoss, {trueDamage:true});
   appendLog(`${target.name} 的 SP 被清空！`);
-  addStatusStacks(target, 'bleed', 5, {label:'流血', type:'debuff'});
+  addBleed(target, 5, 1);
 
   zai._biteHitThisTurn = true;
 
@@ -5234,7 +5276,7 @@ function buildSkillFactoriesForUnit(u){
         )},
         { key:'怨念滋生', prob:0.33, cond:()=>true, make:()=> skill('怨念滋生',1,'green','全图：对被猎杀标记目标 施加1流血+1恐惧',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
-        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addStatusStacks(t,'bleed',1,{label:'流血', type:'debuff'}); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血 与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
+        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addBleed(t, 1, 1); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血 与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
           {},
           {castMs:800}
         )},
@@ -5789,7 +5831,7 @@ function summarizeNegatives(u){
   if(u._staggerStacks && (u.stunThreshold||1)>1) parts.push(`叠层${u._staggerStacks}/${u.stunThreshold}`);
   if(u.status.stunned>0) parts.push(`眩晕x${u.status.stunned}`);
   if(u.status.paralyzed>0) parts.push(`恐惧x${u.status.paralyzed}`);
-  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}`);
+  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}(强度${u.status.bleedStrength||0})`);
   if(u.status.hazBleedTurns>0) parts.push(`Haz流血x${u.status.hazBleedTurns}`);
   if(u.status.bloodyBud>0) parts.push(`血色花蕾x${u.status.bloodyBud}`);
   if(u.status.recoverStacks>0) parts.push(`恢复x${u.status.recoverStacks}`);
@@ -6391,14 +6433,19 @@ function processUnitsTurnStart(side){
         appendLog(`破伤风使 ${u.name} 的痛觉放大减少 1 层`);
       }
     }
-    // Bleed（流血）：每层=1回合，回合开始失去 5% 最大HP
+    // Bleed（流血）：每回合消耗1层，按本层强度造成伤害（每点强度=5HP）
     if(u.status){
       // 兼容旧字段 bleedStacks
       if(u.status.bleedStacks && !u.status.bleed) u.status.bleed = u.status.bleedStacks;
       if(u.status.bleed && u.status.bleed>0){
-        const dmg = Math.floor(u.maxHp*0.05);
-        damageUnit(u.id, dmg, 0, `流血：${u.name} 回合开始失血`, null, {trueDamage:true, hideFx:true});
-        u.status.bleed -= 1;
+        normalizeBleedState(u);
+        const currentLayerStrength = Math.max(1, Number((u.status.bleedStrengthQueue||[])[0] || 1));
+        const dmg = Math.max(1, currentLayerStrength * 5);
+        damageUnit(u.id, dmg, 0, `流血：${u.name} 回合开始失血（本层强度${currentLayerStrength}）`, null, {trueDamage:true, hideFx:true});
+        if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
+        const bleedLayersAfter = Math.max(0, (u.status.bleed||0) - 1);
+        updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
+        u.status.bleedStrength = (u.status.bleedStrengthQueue||[]).reduce((sum,v)=>sum+v,0);
         if(u.status.bleed<=0){ delete u.status.bleed; delete u.status.bleedStacks; appendLog(`${u.name} 的流血结束`); }
       }
     }
