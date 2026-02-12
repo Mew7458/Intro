@@ -173,6 +173,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       stunned: 0,
       paralyzed: 0,
       bleed: 0,
+      bleedStrength: 0,
+      bleedStrengthQueue: [],
       recoverStacks: 0,          // “恢复”Buff 层数（每大回合开始消耗一层，+5HP）
       jixueStacks: 0,            // “鸡血”Buff 层数（下一次攻击伤害x2）
       dependStacks: 0,           // “依赖”Buff 层数（下一次攻击真实伤害，结算后清空自身SP）
@@ -183,7 +185,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       cultTarget: 0,             // "邪教目标"层数（赫雷西成员的标记）
       vulnerability: 0,          // "脆弱"Debuff（伤害增加百分比）
       blastStacks: 0,            // “爆裂”Debuff 层数（被攻击时引爆）
-      chargeStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
+      chargeStacks: 0,
+      lifeDrainStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
     },
     dmgDone: 0,
     skillPool: [],
@@ -1555,6 +1558,9 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
+  if(key === 'bleed'){
+    setBleedStacksDirect(u, value);
+  }
   if(key === 'stunned'){
     refreshSpCrashVulnerability(u);
   }
@@ -1564,6 +1570,61 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+
+function normalizeBleedState(u){
+  if(!u || !u.status) return;
+  if(!Array.isArray(u.status.bleedStrengthQueue)) u.status.bleedStrengthQueue = [];
+  u.status.bleedStrengthQueue = u.status.bleedStrengthQueue
+    .map(v=>Math.max(1, Math.floor(Number(v)||0)))
+    .filter(v=>v>0);
+  const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
+  const declaredStrength = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+  let queueSum = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+  if(u.status.bleedStrengthQueue.length < layerCount){
+    const missing = layerCount - u.status.bleedStrengthQueue.length;
+    const remain = Math.max(0, declaredStrength - queueSum);
+    if(remain > 0){
+      let left = remain;
+      for(let i=0; i<missing; i++){
+        const slotsLeft = missing - i;
+        const alloc = (slotsLeft===1) ? left : Math.max(1, Math.floor(left / slotsLeft));
+        u.status.bleedStrengthQueue.push(Math.max(1, alloc));
+        left -= alloc;
+      }
+    }else{
+      for(let i=0; i<missing; i++) u.status.bleedStrengthQueue.push(1);
+    }
+  }
+  if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function setBleedStacksDirect(u, layers){
+  if(!u || !u.status) return;
+  const nextLayers = Math.max(0, Math.floor(Number(layers)||0));
+  normalizeBleedState(u);
+  if(nextLayers === 0){
+    u.status.bleed = 0;
+    u.status.bleedStrengthQueue = [];
+    u.status.bleedStrength = 0;
+    return;
+  }
+  if(nextLayers < u.status.bleedStrengthQueue.length) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0,nextLayers);
+  while(u.status.bleedStrengthQueue.length < nextLayers) u.status.bleedStrengthQueue.push(1);
+  u.status.bleed = nextLayers;
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function addBleed(u, layers=1, strengthPerLayer=1){
+  if(!u || !u.status || layers<=0) return u && u.status ? (u.status.bleed||0) : 0;
+  const addLayers = Math.max(0, Math.floor(Number(layers)||0));
+  const perLayer = Math.max(1, Math.floor(Number(strengthPerLayer)||0));
+  if(addLayers<=0) return u.status.bleed||0;
+  normalizeBleedState(u);
+  for(let i=0;i<addLayers;i++) u.status.bleedStrengthQueue.push(perLayer);
+  u.status.bleed = (u.status.bleed||0) + addLayers;
+  u.status.bleedStrength = (u.status.bleedStrength||0) + addLayers * perLayer;
+  updateStatusStacks(u,'bleed',u.status.bleed,{label:'流血', type:'debuff'});
+  return u.status.bleed;
 }
 function grantKarmaBlastSkill(u){
   if(!u || u.hp<=0) return;
@@ -2016,6 +2077,47 @@ function calcOutgoingDamage(attacker, baseDmg, target, skillName){
   }
   return dmg;
 }
+
+function getBaseArmorForUnit(u){
+  if(!u) return 0;
+  const rawName = String(u.name || '').replace(/（虚影）/g, '').trim();
+  const name = rawName.startsWith('Velmira') ? 'Velmira' : rawName;
+  if(name === 'Adora') return 10 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Dario') return 15 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Karma') return 15 + Math.max(0, (u.level||0) - 20);
+  const fixedArmor = {
+    'Haz': 40,
+    'Katz': 30,
+    'Tusk': 40,
+    'Neyla': 10,
+    'Kyn': 20,
+    '宰': 50,
+    'Velmira': 60,
+    'Khathia': 40,
+    'Lirathe': 50,
+    '刑警队员': 0,
+    '雏形赫雷西成员': 10,
+    '法形赫雷西成员': 10,
+    '刺形赫雷西成员': 10,
+    '赫雷西初代精英成员': 20,
+    '组装型进阶赫雷西成员（赫雷西成员B）': 30,
+  };
+  return fixedArmor[name] ?? 0;
+}
+function getLevelArmorBonus(u){
+  if(!u || !u.side) return 0;
+  const myTeam = Object.values(units).filter(x=>x && x.side===u.side && x.hp>0);
+  const oppTeam = Object.values(units).filter(x=>x && x.side!==u.side && x.hp>0);
+  if(myTeam.length===0 || oppTeam.length===0) return 0;
+  const myAvg = Math.floor(myTeam.reduce((s,x)=>s+(x.level||0),0) / myTeam.length);
+  const oppAvg = Math.floor(oppTeam.reduce((s,x)=>s+(x.level||0),0) / oppTeam.length);
+  if(myAvg <= oppAvg) return 0;
+  return Math.max(0, (u.level||0) - oppAvg) * 5;
+}
+function getTotalArmorForUnit(u){
+  return Math.max(0, getBaseArmorForUnit(u) + getLevelArmorBonus(u));
+}
+
 function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const u = units[id]; if(!u || u.hp<=0) return;
 
@@ -2129,6 +2231,9 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   showDamageFloat(u, finalHp, finalSp);
   pulseCell(u.r, u.c);
   if(died){ showDeathFx(u); }
+  if(source && source.side!==u.side && (finalHp>0 || finalSp>0)){
+    triggerLifeDrainOnHit(source);
+  }
 
   // 反伤姿态：反弹部分HP伤害
   if(sourceId && u._stanceType==='retaliate' && u._stanceTurns>0 && u._reflectPct>0 && !opts._reflected){
@@ -2490,7 +2595,7 @@ function officerCollectTargets(cells){
 // Helper function: apply bleed stacks
 function applyBleed(target, layers=1){
   if(!target || target.hp<=0) return 0;
-  const stacks = addStatusStacks(target,'bleed', layers,{label:'流血', type:'debuff'}) || 0;
+  const stacks = addBleed(target, layers, 1) || 0;
   appendLog(`${target.name} 流血层数 -> ${stacks}`);
   return stacks;
 }
@@ -2752,7 +2857,7 @@ async function heresyBasic_Revenge(u, target){
     await stageMark([{r:target.r,c:target.c}]);
     const dmg = calcOutgoingDamage(u,10,target,'讨回公道');
     damageUnit(target.id, dmg, 5, `${u.name} 讨回公道·抓挠${i+1} 命中 ${target.name}`, u.id);
-    addStatusStacks(target,'bleed',1,{label:'流血', type:'debuff'});
+    addBleed(target, 1, 1);
     u.dmgDone += dmg;
   }
   
@@ -2767,7 +2872,7 @@ async function heresyBasic_Revenge(u, target){
       await stageMark([{r:target.r,c:target.c}]);
       const dmg = calcOutgoingDamage(u,10,target,'讨回公道');
       damageUnit(target.id, dmg, 5, `${u.name} 讨回公道(追击)·抓挠${i+1} 命中 ${target.name}`, u.id);
-      addStatusStacks(target,'bleed',1,{label:'流血', type:'debuff'});
+      addBleed(target, 1, 1);
       u.dmgDone += dmg;
     }
   }
@@ -3439,6 +3544,78 @@ async function heresyBoss_Purge(u, desc){
 // —— Khathia 防御姿态兼容（保留旧函数以支持玩家技能） ——
 // —— 技能池/抽牌（含调整：Katz/Nelya/Kyn 技能）；移动卡统一蓝色 —— 
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
+
+function hasSkillInPool(u,name){
+  return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
+}
+
+function triggerLifeDrainOnHit(source){
+  if(!source || !source.status || !source.side) return;
+  const stacks = source.status.lifeDrainStacks || 0;
+  if(stacks <= 0) return;
+  const allies = Object.values(units).filter(u=>u && u.side===source.side && u.hp>0).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp));
+  const target = allies[0];
+  if(!target) return;
+  const before = target.hp;
+  target.hp = Math.min(target.maxHp, target.hp + 10);
+  updateStatusStacks(source, 'lifeDrainStacks', Math.max(0, stacks-1), {label:'小生命夺取', type:'buff'});
+  showGainFloat(target, target.hp-before, 0);
+  appendLog(`${source.name} 的“小生命夺取”触发：${target.name} 恢复 ${target.hp-before} HP`);
+}
+function grantBlackFlashRelease(u){
+  if(!u || u.hp<=0) return;
+  if((u.skillPool||[]).some(sk=>sk && sk.name==='黑瞬「释放」')) return;
+  const release = skill('黑瞬「释放」', 1, 'purple', '对所有敌方单位造成 15 SP 伤害（不受掩体）',
+    (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+    (uu)=>{
+      const enemies = Object.values(units).filter(t=>t.side!==uu.side && t.hp>0);
+      if(enemies.length===0){ appendLog('黑瞬「释放」：场上没有敌方单位'); unitActed(uu); return; }
+      for(const t of enemies){ damageUnit(t.id, 0, 15, `${uu.name} 黑瞬「释放」命中 ${t.name}`, uu.id, {ignoreCover:true}); }
+      appendLog(`${uu.name} 使用 黑瞬「释放」：敌方单位 SP 受损`);
+      unitActed(uu);
+    },
+    {aoe:true},
+    {castMs:700, extraSkill:true}
+  );
+  u.skillPool = u.skillPool || [];
+  u.skillPool.push(release);
+  appendLog(`${u.name} 获得额外技能：黑瞬「释放」`);
+}
+function adoraBlackFlashCharge(u){
+  grantBlackFlashRelease(u);
+  appendLog(`${u.name} 使用 黑瞬「充能」`);
+  unitActed(u);
+}
+function darioLifeDrain(u){
+  const next = addStatusStacks(u, 'lifeDrainStacks', 1, {label:'小生命夺取', type:'buff'});
+  appendLog(`${u.name} 使用 生命夺取：获得 小生命夺取（${next}）`);
+  unitActed(u);
+}
+async function karmaCataclysm(u){
+  const cells = inRadiusCells(u,2,{allowOccupied:true});
+  const targets = [];
+  const seen = new Set();
+  for(const c of cells){
+    const t = getUnitAt(c.r,c.c);
+    if(!t || t.hp<=0 || seen.has(t.id)) continue;
+    seen.add(t.id);
+    targets.push(t);
+  }
+  if(targets.length===0){ appendLog('天崩地裂：范围内没有目标'); unitActed(u); return; }
+  await telegraphThenImpact(cells);
+  appendLog(`${u.name} 使用 天崩地裂`);
+  for(const t of targets){
+    if(t.side===u.side){
+      damageUnit(t.id, 10, 5, `${u.name} 天崩地裂 波及 ${t.name}`, u.id);
+    }else{
+      const adjacent = mdist(u,t) <= 1;
+      const hpDmg = adjacent ? 30 : 25;
+      damageUnit(t.id, hpDmg, 10, `${u.name} 天崩地裂 命中 ${t.name}`, u.id);
+    }
+  }
+  unitActed(u);
+}
+
 function buildSkillFactoriesForUnit(u){
   const F=[];
   if(u.id==='adora'){
@@ -3764,6 +3941,32 @@ function buildSkillFactoriesForUnit(u){
       )}
     );
   }
+
+  if(u.id==='adora'){
+    F.push({ key:'黑瞬「充能」', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'黑瞬「释放」'), make:()=> skill('黑瞬「充能」',2,'purple','获得额外技能“黑瞬「释放」”',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> adoraBlackFlashCharge(uu),
+      {},
+      {castMs:700}
+    )});
+  }
+  if(u.id==='dario'){
+    F.push({ key:'生命夺取', prob:0.35, cond:()=>true, make:()=> skill('生命夺取',0,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 10HP',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> darioLifeDrain(uu),
+      {},
+      {castMs:500}
+    )});
+  }
+  if(u.id==='karma'){
+    F.push({ key:'天崩地裂', prob:0.15, cond:()=>u.level>=50, make:()=> skill('天崩地裂',3,'red','周围2格内所有单位受击：友方 10HP+5SP，敌方 25HP+10SP（相邻再+5HP）',
+      (uu)=> inRadiusCells(uu,2,{allowOccupied:true}),
+      (uu)=> karmaCataclysm(uu),
+      {aoe:true},
+      {castMs:1200}
+    )});
+  }
+
   return F;
 }
 function drawOneSkill(u){
@@ -4605,9 +4808,17 @@ function processUnitsTurnStart(side){
     }
 
     if(u.status.bleed && u.status.bleed>0){
-      const bleedDmg = Math.max(1, Math.floor(u.maxHp*0.05));
-      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损`, null);
-      u.status.bleed = Math.max(0, u.status.bleed-1);
+      normalizeBleedState(u);
+      const bleedLayersBefore = u.status.bleed;
+      const bleedStrengthBefore = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+      const bleedDmg = Math.max(0, bleedStrengthBefore * 5);
+      if(bleedDmg > 0){
+        damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损（流血强度${bleedStrengthBefore}）`, null, {trueDamage:true});
+      }
+      if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
+      const bleedLayersAfter = Math.max(0, bleedLayersBefore - 1);
+      updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
+      u.status.bleedStrength = (u.status.bleedStrengthQueue||[]).reduce((sum,v)=>sum+v,0);
     }
 
     if(u.status.resentStacks && u.status.resentStacks>0){
