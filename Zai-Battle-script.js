@@ -1775,7 +1775,7 @@ function grantKarmaBlastSkill(u){
     {aoe:true},
     {castMs:900}
   );
-  blast.meta = Object.assign({}, blast.meta || {}, {extraSkill:true});
+  blast.meta = Object.assign({}, blast.meta || {}, {extraSkill:true, karmaBlastExtra:true, grantedTurnsStarted:(u.turnsStarted||0)});
   u.skillPool = u.skillPool || [];
   u.skillPool.push(blast);
   appendLog(`${u.name} 获得额外技能：爆`);
@@ -6295,6 +6295,13 @@ function processUnitsTurnStart(side){
   // per-turn trackers
   for(const u of sideUnits){
     u.turnsStarted = (u.turnsStarted||0) + 1;
+    if(Array.isArray(u.skillPool) && u.skillPool.length){
+      const beforeBlastCards = u.skillPool.length;
+      u.skillPool = u.skillPool.filter(sk=> !(sk && sk.meta && sk.meta.karmaBlastExtra && Number(sk.meta.grantedTurnsStarted||0) < Number(u.turnsStarted||0)));
+      if(u.skillPool.length < beforeBlastCards){
+        appendLog(`${u.name} 的额外技能“爆”已过期并消失`);
+      }
+    }
     applyAccessoryEffects(u, side);
     u._hitsThisTurn = 0;
     u._execTriggeredThisTurn = false;
