@@ -159,6 +159,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       stunned: 0,
       paralyzed: 0,
       bleed: 0,
+      bleedStrength: 0,
+      bleedStrengthQueue: [],
       recoverStacks: 0,          // “恢复”Buff 层数（每大回合开始消耗一层，+5HP）
       jixueStacks: 0,            // “鸡血”Buff 层数（下一次攻击伤害x2）
       dependStacks: 0,           // “依赖”Buff 层数（下一次攻击真实伤害，结算后清空自身SP）
@@ -1578,6 +1580,9 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
+  if(key === 'bleed'){
+    setBleedStacksDirect(u, value);
+  }
   if(key === 'stunned'){
     refreshSpCrashVulnerability(u);
   }
@@ -1587,6 +1592,45 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+
+function normalizeBleedState(u){
+  if(!u || !u.status) return;
+  if(!Array.isArray(u.status.bleedStrengthQueue)) u.status.bleedStrengthQueue = [];
+  u.status.bleedStrengthQueue = u.status.bleedStrengthQueue
+    .map(v=>Math.max(1, Math.floor(Number(v)||0)))
+    .filter(v=>v>0);
+  const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
+  while(u.status.bleedStrengthQueue.length < layerCount) u.status.bleedStrengthQueue.push(1);
+  if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function setBleedStacksDirect(u, layers){
+  if(!u || !u.status) return;
+  const nextLayers = Math.max(0, Math.floor(Number(layers)||0));
+  normalizeBleedState(u);
+  if(nextLayers === 0){
+    u.status.bleed = 0;
+    u.status.bleedStrengthQueue = [];
+    u.status.bleedStrength = 0;
+    return;
+  }
+  if(nextLayers < u.status.bleedStrengthQueue.length) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0,nextLayers);
+  while(u.status.bleedStrengthQueue.length < nextLayers) u.status.bleedStrengthQueue.push(1);
+  u.status.bleed = nextLayers;
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function addBleed(u, layers=1, strengthPerLayer=1){
+  if(!u || !u.status || layers<=0) return u && u.status ? (u.status.bleed||0) : 0;
+  const addLayers = Math.max(0, Math.floor(Number(layers)||0));
+  const perLayer = Math.max(1, Math.floor(Number(strengthPerLayer)||0));
+  if(addLayers<=0) return u.status.bleed||0;
+  normalizeBleedState(u);
+  for(let i=0;i<addLayers;i++) u.status.bleedStrengthQueue.push(perLayer);
+  u.status.bleed = (u.status.bleed||0) + addLayers;
+  u.status.bleedStrength = (u.status.bleedStrength||0) + addLayers * perLayer;
+  updateStatusStacks(u,'bleed',u.status.bleed,{label:'流血', type:'debuff'});
+  return u.status.bleed;
 }
 function grantKarmaBlastSkill(u){
   if(!u || u.hp<=0) return;
@@ -2040,6 +2084,47 @@ function calcOutgoingDamage(attacker, baseDmg, target, skillName){
   }
   return dmg;
 }
+
+function getBaseArmorForUnit(u){
+  if(!u) return 0;
+  const rawName = String(u.name || '').replace(/（虚影）/g, '').trim();
+  const name = rawName.startsWith('Velmira') ? 'Velmira' : rawName;
+  if(name === 'Adora') return 10 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Dario') return 15 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Karma') return 15 + Math.max(0, (u.level||0) - 20);
+  const fixedArmor = {
+    'Haz': 40,
+    'Katz': 30,
+    'Tusk': 40,
+    'Neyla': 10,
+    'Kyn': 20,
+    '宰': 50,
+    'Velmira': 60,
+    'Khathia': 40,
+    'Lirathe': 50,
+    '刑警队员': 0,
+    '雏形赫雷西成员': 10,
+    '法形赫雷西成员': 10,
+    '刺形赫雷西成员': 10,
+    '赫雷西初代精英成员': 20,
+    '组装型进阶赫雷西成员（赫雷西成员B）': 30,
+  };
+  return fixedArmor[name] ?? 0;
+}
+function getLevelArmorBonus(u){
+  if(!u || !u.side) return 0;
+  const myTeam = Object.values(units).filter(x=>x && x.side===u.side && x.hp>0);
+  const oppTeam = Object.values(units).filter(x=>x && x.side!==u.side && x.hp>0);
+  if(myTeam.length===0 || oppTeam.length===0) return 0;
+  const myAvg = Math.floor(myTeam.reduce((s,x)=>s+(x.level||0),0) / myTeam.length);
+  const oppAvg = Math.floor(oppTeam.reduce((s,x)=>s+(x.level||0),0) / oppTeam.length);
+  if(myAvg <= oppAvg) return 0;
+  return Math.max(0, (u.level||0) - oppAvg) * 5;
+}
+function getTotalArmorForUnit(u){
+  return Math.max(0, getBaseArmorForUnit(u) + getLevelArmorBonus(u));
+}
+
 function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const u = units[id]; if(!u || u.hp<=0) return;
 
@@ -2147,6 +2232,12 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const prevHp = u.hp;
   let finalHp = Math.max(0, hpDmg);
   let finalSp = Math.max(0, spDmg);
+  if(!trueDamage && finalHp > 0){
+    const armor = getTotalArmorForUnit(u);
+    if(armor > 0){
+      finalHp = Math.max(0, Math.round(finalHp * 100 / (100 + armor)));
+    }
+  }
 
   // 肯定Buff - 免疫SP伤害（多阶段攻击全阶段免疫）
   if(!opts.ignoreAffirmation && finalSp > 0 && u.status && u.status.affirmationStacks > 0){
@@ -2266,9 +2357,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
       const equipped = loadEquippedAccessories();
       if(equipped[src.id] === 'tetanus'){
         // Add bleeding
-        const currentBleed = u.status.bleed || 0;
-        u.status.bleed = currentBleed + 1;
-        updateStatusStacks(u, 'bleed', u.status.bleed, { label: '流血', type: 'debuff' });
+        addBleed(u, 1, 1);
         
         // Add resentment
         addStatusStacks(u, 'resentStacks', 1, { label: '怨念', type: 'debuff' });
@@ -2594,7 +2683,7 @@ function darioTearWound(u, target){
   u.dmgDone += finalDmg;
 
   const bleedStacks = isFullHp ? 1 : 2;
-  addStatusStacks(target, 'bleed', bleedStacks, {label:'流血', type:'debuff'});
+  addBleed(target, bleedStacks, 1);
   appendLog(`${target.name} 附加 流血+${bleedStacks}`);
 
   setTimeout(() => {
@@ -2612,7 +2701,7 @@ function darioStatusRecovery(u, aim){
   const clearedEffects = [];
   if(t.status.stunned > 0){ clearedEffects.push('眩晕'); t.status.stunned = 0; }
   if(t.status.paralyzed > 0){ clearedEffects.push('恐惧'); t.status.paralyzed = 0; }
-  if(t.status.bleed > 0){ clearedEffects.push('流血'); t.status.bleed = 0; }
+  if(t.status.bleed > 0){ clearedEffects.push('流血'); setBleedStacksDirect(t, 0); }
   if(t.status.hazBleedTurns > 0){ clearedEffects.push('Haz流血'); t.status.hazBleedTurns = 0; }
 
   const spBefore = t.sp;
@@ -4047,7 +4136,7 @@ function summarizeNegatives(u){
   if(u._staggerStacks && (u.stunThreshold||1)>1) parts.push(`叠层${u._staggerStacks}/${u.stunThreshold}`);
   if(u.status.stunned>0) parts.push(`眩晕x${u.status.stunned}`);
   if(u.status.paralyzed>0) parts.push(`恐惧x${u.status.paralyzed}`);
-  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}`);
+  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}(强度${u.status.bleedStrength||0})`);
   if(u.status.bloodyBud>0) parts.push(`血色花蕾x${u.status.bloodyBud}`);
   if(u.status.recoverStacks>0) parts.push(`恢复x${u.status.recoverStacks}`);
   if(u.status.jixueStacks>0) parts.push(`鸡血x${u.status.jixueStacks}`);
@@ -4578,9 +4667,15 @@ function processUnitsTurnStart(side){
     }
 
     if(u.status.bleed && u.status.bleed>0){
-      const bleedDmg = Math.max(1, Math.floor(u.maxHp*0.05));
-      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损`, null);
-      u.status.bleed = Math.max(0, u.status.bleed-1);
+      normalizeBleedState(u);
+      const bleedLayersBefore = u.status.bleed;
+      const currentLayerStrength = Math.max(1, Number((u.status.bleedStrengthQueue||[])[0] || 1));
+      const bleedDmg = Math.max(1, currentLayerStrength * 5);
+      damageUnit(u.id, bleedDmg, 0, `${u.name} 因流血受损（本层强度${currentLayerStrength}）`, null);
+      if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
+      const bleedLayersAfter = Math.max(0, bleedLayersBefore - 1);
+      updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
+      u.status.bleedStrength = (u.status.bleedStrengthQueue||[]).reduce((sum,v)=>sum+v,0);
     }
 
     if(u.status.resentStacks && u.status.resentStacks>0){

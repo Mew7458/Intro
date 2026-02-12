@@ -3998,7 +3998,7 @@ function finishStageStory(skipped = false) {
     // Redirect to boss battle after sevenSeas story (even if skipped)
     if (stageId === 'sevenSeas') {
       setTimeout(() => {
-        window.location.href = './boss-battle.html';
+        window.location.href = './7seaboss-battle.html';
       }, 500);
     }
     
