@@ -3998,7 +3998,7 @@ function finishStageStory(skipped = false) {
     // Redirect to boss battle after sevenSeas story (even if skipped)
     if (stageId === 'sevenSeas') {
       setTimeout(() => {
-        window.location.href = './boss-battle.html';
+        window.location.href = './7seaboss-battle.html';
       }, 500);
     }
     
@@ -4276,15 +4276,12 @@ const skillLibrary = {
     { id: 'dario_bitter_sweet', name: '先苦后甜', color: 'orange', cost: '4步', description: '下一回合额外+4步（技能池一次仅能存在1张）。', probability: '15%', minLevel: 25 },
     { id: 'dario_tear_wound', name: '撕裂伤口', color: 'green', cost: '1步', description: '前方3格爪击造成15点伤害后叠一层流血（如果对方不是满血伤害增加50%以及再叠一层流血），随后抽出利爪造成5HP。', probability: '80%', minLevel: 50 },
     { id: 'dario_status_recovery', name: '状态恢复', color: 'orange', cost: '4步', description: '选中全图任何友方单位，并把该单位的眩晕效果全部移除，并增加该单位15SP。', probability: '30%', minLevel: 50 },
-    { id: 'dario_life_drain', name: '生命夺取', color: 'pink', cost: '1步', description: '给自己上一层“小生命夺取”Buff，下一次攻击恢复场上血量最少的友方单位15HP。', probability: '35%', minLevel: 50 }
+    { id: 'dario_life_drain', name: '生命夺取', color: 'pink', cost: '0步', description: '给自己上一层“小生命夺取”Buff，下一次攻击恢复场上血量最少的友方单位10HP。', probability: '35%', minLevel: 50 },
+    { id: 'dario_participation', name: '我也要点参与感～', color: 'white', cost: '2步', description: '主动使用后，下一次Dario技能攻击会再重复一次；若此卡在技能池里未使用，则友方累计命中敌方2次时，Dario追击一次“机械爪击”（全图范围）。', probability: '20%', minLevel: 50 }
   ]
 };
 
-const stageSkillExclusions = {
-  sevenSeas: {
-    adora: ['adora_blackflash_charge'],
-  },
-};
+const stageSkillExclusions = {};
 
 function getAvailableSkillsForStage(stageId, characterId) {
   const skills = skillLibrary[characterId] || [];
@@ -4657,9 +4654,17 @@ const characterData = {
               name: '生命夺取',
               color: 'pink',
               colorLabel: '粉色',
-              cost: '1 步',
-              description: '使用后给自己上一层“小生命夺取”Buff（下一次攻击恢复场上血量最少的友方单位 15 HP）。',
+              cost: '0 步',
+              description: '使用后给自己上一层“小生命夺取”Buff（下一次攻击恢复场上血量最少的友方单位 10 HP）。',
               note: '出现概率 35%。',
+            },
+            {
+              name: '我也要点参与感～',
+              color: 'white',
+              colorLabel: '白色',
+              cost: '2 步',
+              description: '主动使用后，下一次Dario技能攻击会再重复一次；若此卡在技能池里未使用，则友方累计命中敌方2次时，Dario追击一次“机械爪击”（全图范围）。',
+              note: '50级解锁，出现概率 20%。',
             },
           ],
         },
