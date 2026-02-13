@@ -4066,7 +4066,7 @@ function buildSkillFactoriesForUnit(u){
         {aoe:false},
         {cellTargeting:true, castMs:900}
       )},
-      { key:'生命夺取', prob:0.35, cond:()=>true, make:()=> skill('生命夺取',0,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 10HP',
+      { key:'生命夺取', prob:0.35, cond:()=>u.level>=50, make:()=> skill('生命夺取',0,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 10HP',
         (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
         (uu)=> darioLifeDrain(uu),
         {},
