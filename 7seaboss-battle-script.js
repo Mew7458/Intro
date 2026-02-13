@@ -202,6 +202,7 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
   };
 }
 const units = {};
+const inkShards = new Map();
 // 玩家
 units['adora'] = createUnit('adora','Adora','player',52, 17, 2, 100,100, 0.5,0, ['backstab','calmAnalysis','proximityHeal','fearBuff']);
 units['dario'] = createUnit('dario','Dario','player',52, 17, 6, 150,100, 0.75,0, ['quickAdjust','counter','moraleBoost']);
@@ -3536,6 +3537,65 @@ function hasSkillInPool(u,name){
   return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
 }
 
+function inkShardKey(r,c){ return `${r},${c}`; }
+function countInkShards(side){
+  let count = 0;
+  for(const shardSide of inkShards.values()){
+    if(shardSide === side) count += 1;
+  }
+  return count;
+}
+function spawnInkShards(side, count=3){
+  const candidates = [];
+  for(let r=1;r<=ROWS;r++){
+    for(let c=1;c<=COLS;c++){
+      if(!clampCell(r,c)) continue;
+      if(getUnitAt(r,c)) continue;
+      const key = inkShardKey(r,c);
+      if(inkShards.has(key)) continue;
+      candidates.push({r,c});
+    }
+  }
+  if(candidates.length === 0){
+    appendLog('黑瞬「充能」：场上没有可放置墨片的空格');
+    return [];
+  }
+  const created = [];
+  const total = Math.min(count, candidates.length);
+  for(let i=0;i<total;i++){
+    const idx = Math.floor(Math.random() * candidates.length);
+    const pick = candidates.splice(idx,1)[0];
+    inkShards.set(inkShardKey(pick.r,pick.c), side);
+    created.push(pick);
+  }
+  return created;
+}
+function consumeInkShardsUnderUnits(){
+  if(inkShards.size === 0) return;
+  const beforeCounts = {
+    player: countInkShards('player'),
+    enemy: countInkShards('enemy'),
+  };
+  let removed = false;
+  for(const id in units){
+    const u = units[id];
+    if(!u || u.hp<=0) continue;
+    const key = inkShardKey(u.r, u.c);
+    if(inkShards.get(key) === u.side){
+      inkShards.delete(key);
+      appendLog(`${u.name} 拾取了墨片`);
+      pulseCell(u.r, u.c);
+      removed = true;
+    }
+  }
+  if(!removed) return;
+  for(const side of ['player','enemy']){
+    if(beforeCounts[side] > 0 && countInkShards(side) === 0){
+      grantBlackFlashRelease(side);
+    }
+  }
+}
+
 function triggerLifeDrainOnHit(source, target){
   if(!source || !source.status || !source.side) return;
   const stacks = source.status.lifeDrainStacks || 0;
@@ -3577,28 +3637,48 @@ function darioParticipation(u){
   unitActed(u);
 }
 
-function grantBlackFlashRelease(u){
+function grantBlackFlashRelease(side){
+  const adoraId = side === 'player' ? 'adora' : 'adora_p2';
+  const u = units[adoraId] || Object.values(units).find(v=>v && v.id==='adora' && v.side===side);
   if(!u || u.hp<=0) return;
-  if((u.skillPool||[]).some(sk=>sk && sk.name==='黑瞬「释放」')) return;
-  const release = skill('黑瞬「释放」', 1, 'purple', '对所有敌方单位造成 15 SP 伤害（不受掩体）',
+  if((u.skillPool || []).some(sk=>sk && sk.name === '黑瞬「释放」')) return;
+  if(countInkShards(side) > 0) return;
+  const release = skill(
+    '黑瞬「释放」',
+    3,
+    'purple',
+    '释放所有墨片能量：敌方单位受到其最大 SP 的 50% + 30 SP 伤害',
     (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
-    (uu)=>{
-      const enemies = Object.values(units).filter(t=>t.side!==uu.side && t.hp>0);
-      if(enemies.length===0){ appendLog('黑瞬「释放」：场上没有敌方单位'); unitActed(uu); return; }
-      for(const t of enemies){ damageUnit(t.id, 0, 15, `${uu.name} 黑瞬「释放」命中 ${t.name}`, uu.id, {ignoreCover:true}); }
-      appendLog(`${uu.name} 使用 黑瞬「释放」：敌方单位 SP 受损`);
-      unitActed(uu);
-    },
-    {aoe:true},
-    {castMs:700, extraSkill:true}
+    (uu)=> adoraBlackFlashRelease(uu),
+    {},
+    {castMs:1200}
   );
-  u.skillPool = u.skillPool || [];
+  release.meta = Object.assign({}, release.meta || {}, {extraSkill:true});
+  if(!u.skillPool) u.skillPool = [];
   u.skillPool.push(release);
   appendLog(`${u.name} 获得额外技能：黑瞬「释放」`);
 }
 function adoraBlackFlashCharge(u){
-  grantBlackFlashRelease(u);
-  appendLog(`${u.name} 使用 黑瞬「充能」`);
+  const created = spawnInkShards(u.side, 3);
+  if(created.length){
+    created.forEach(cell=>pulseCell(cell.r, cell.c));
+    appendLog(`${u.name} 使用 黑瞬「充能」：生成 ${created.length} 个墨片`);
+  }
+  renderAll();
+  unitActed(u);
+}
+function adoraBlackFlashRelease(u){
+  const enemies = Object.values(units).filter(t=>t.side!==u.side && t.hp>0);
+  if(enemies.length === 0){
+    appendLog('黑瞬「释放」：场上没有敌方单位');
+    unitActed(u);
+    return;
+  }
+  for(const target of enemies){
+    const spDmg = Math.round(target.maxSp * 0.5) + 30;
+    damageUnit(target.id, 0, spDmg, `${u.name} 黑瞬「释放」命中 ${target.name}`, u.id, {ignoreCover:true});
+  }
+  appendLog(`${u.name} 使用 黑瞬「释放」：敌方单位 SP 受损`);
   unitActed(u);
 }
 function darioLifeDrain(u){
@@ -4037,7 +4117,7 @@ function buildSkillFactoriesForUnit(u){
   
 
   if(u.id==='adora'){
-    F.push({ key:'黑瞬「充能」', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'黑瞬「释放」'), make:()=> skill('黑瞬「充能」',2,'purple','获得额外技能“黑瞬「释放」”',
+    F.push({ key:'黑瞬「充能」', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'黑瞬「释放」') && countInkShards(u.side)===0, make:()=> skill('黑瞬「充能」',2,'purple','随机生成 3 个墨片；友方踩到后消失，全部消失时获得额外技能「黑瞬「释放」」',
       (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
       (uu)=> adoraBlackFlashCharge(uu),
       {},
@@ -4215,6 +4295,7 @@ function buildGrid(){
       cell.className = 'cell';
       if(isVoidCell(r,c)) cell.classList.add('void');
       if(isCoverCell(r,c)) cell.classList.add('cover');
+      if(inkShards.has(inkShardKey(r,c))) cell.classList.add('ink-shard');
       cell.dataset.r=r; cell.dataset.c=c;
       const coord=document.createElement('div'); coord.className='coord'; coord.textContent=`${r},${c}`; cell.appendChild(coord);
 
@@ -5499,6 +5580,7 @@ function showDefeatScreen(){
   }
 }
 function renderAll(){
+  consumeInkShardsUnderUnits();
   buildGrid();
   placeUnits();
   renderStatus();
