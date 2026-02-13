@@ -3464,7 +3464,8 @@ const skillKeyMapping = {
     'adora_cheer': '加油哇！',
     'adora_rely': '只能靠你了。。',
     'adora_bloom': '绽放（红色）',
-    'adora_assassination_1': '课本知识：刺杀一'
+    'adora_assassination_1': '课本知识：刺杀一',
+    'adora_blackflash_charge': '黑瞬「充能」'
   },
   karma: {
     'karma_punch': '沙包大的拳头',
@@ -3473,7 +3474,8 @@ const skillKeyMapping = {
     'karma_blood_grip': '嗜血之握',
     'karma_deep_breath': '深呼吸',
     'karma_adrenaline': '肾上腺素',
-    'karma_charge': '蓄力'
+    'karma_charge': '蓄力',
+    'karma_cataclysm': '天崩地裂'
   },
   dario: {
     'dario_claw': '机械爪击',
@@ -3482,7 +3484,9 @@ const skillKeyMapping = {
     'dario_pull': '拿来吧你！',
     'dario_bitter_sweet': '先苦后甜',
     'dario_tear_wound': '撕裂伤口',
-    'dario_status_recovery': '状态恢复'
+    'dario_status_recovery': '状态恢复',
+    'dario_life_drain': '生命夺取',
+    'dario_participation': '我也要点参与感～'
   }
 };
 
@@ -3500,7 +3504,7 @@ function getSelectedSkillKeysForUnit(u) {
   const selectedKeys = new Set();
   
   // Add skills from each color slot
-  for (const color of ['green', 'blue', 'pink', 'white', 'red']) {
+  for (const color of ['green', 'blue', 'pink', 'white', 'red', 'purple']) {
     if (charSelection[color]) {
       const battleKey = mapping[charSelection[color]];
       if (battleKey) selectedKeys.add(battleKey);
@@ -3901,6 +3905,12 @@ function buildSkillFactoriesForUnit(u){
       {aoe:true},
       {castMs:1200}
     )});
+  }
+
+  const selectedKeys = getSelectedSkillKeysForUnit(u);
+  if (selectedKeys) {
+    const filtered = F.filter(factory => selectedKeys.has(factory.key));
+    return filtered;
   }
 
   return F;

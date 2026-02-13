@@ -3464,7 +3464,8 @@ const skillKeyMapping = {
     'adora_cheer': '加油哇！',
     'adora_rely': '只能靠你了。。',
     'adora_bloom': '绽放（红色）',
-    'adora_assassination_1': '课本知识：刺杀一'
+    'adora_assassination_1': '课本知识：刺杀一',
+    'adora_blackflash_charge': '黑瞬「充能」'
   },
   karma: {
     'karma_punch': '沙包大的拳头',
@@ -3473,7 +3474,8 @@ const skillKeyMapping = {
     'karma_blood_grip': '嗜血之握',
     'karma_deep_breath': '深呼吸',
     'karma_adrenaline': '肾上腺素',
-    'karma_charge': '蓄力'
+    'karma_charge': '蓄力',
+    'karma_cataclysm': '天崩地裂'
   },
   dario: {
     'dario_claw': '机械爪击',
@@ -3482,31 +3484,42 @@ const skillKeyMapping = {
     'dario_pull': '拿来吧你！',
     'dario_bitter_sweet': '先苦后甜',
     'dario_tear_wound': '撕裂伤口',
-    'dario_status_recovery': '状态恢复'
+    'dario_status_recovery': '状态恢复',
+    'dario_life_drain': '生命夺取',
+    'dario_participation': '我也要点参与感～'
   }
 };
 
 // Helper function to get selected skill keys for filtering
 function getSelectedSkillKeysForUnit(u) {
   if (!shouldApplySkillSelection(u)) return null;
-  
+
   const selectedSkills = loadSelectedSkillsForBattle();
-  if (!selectedSkills || !selectedSkills[u.id]) return null;
-  
-  const charSelection = selectedSkills[u.id];
+  if (!selectedSkills) return null;
+
+  let charSelection = null;
+  if (selectedSkills.mode === 'duo' && selectedSkills.data) {
+    charSelection = selectedSkills.data.player1?.[u.id] || selectedSkills.data[u.id] || null;
+  } else if (selectedSkills.data) {
+    charSelection = selectedSkills.data[u.id] || null;
+  } else {
+    charSelection = selectedSkills[u.id] || null;
+  }
+  if (!charSelection) return null;
+
   const mapping = skillKeyMapping[u.id];
   if (!mapping) return null;
-  
+
   const selectedKeys = new Set();
-  
+
   // Add skills from each color slot
-  for (const color of ['green', 'blue', 'pink', 'white', 'red']) {
+  for (const color of ['green', 'blue', 'pink', 'white', 'red', 'purple']) {
     if (charSelection[color]) {
       const battleKey = mapping[charSelection[color]];
       if (battleKey) selectedKeys.add(battleKey);
     }
   }
-  
+
   // Add orange skills (can have multiple)
   if (Array.isArray(charSelection.orange)) {
     for (const skillId of charSelection.orange) {
@@ -3514,7 +3527,7 @@ function getSelectedSkillKeysForUnit(u) {
       if (battleKey) selectedKeys.add(battleKey);
     }
   }
-  
+
   return selectedKeys.size > 0 ? selectedKeys : null;
 }
 

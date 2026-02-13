@@ -4304,7 +4304,8 @@ const skillKeyMapping = {
     'karma_deep_breath': '深呼吸',
     'karma_adrenaline': '肾上腺素',
     'karma_cataclysm': '天崩地裂',
-    'karma_charge': '蓄力'
+    'karma_charge': '蓄力',
+    'karma_cataclysm': '天崩地裂'
   },
   dario: {
     'dario_claw': '机械爪击',
@@ -4314,7 +4315,8 @@ const skillKeyMapping = {
     'dario_bitter_sweet': '先苦后甜',
     'dario_tear_wound': '撕裂伤口',
     'dario_status_recovery': '状态恢复',
-    'dario_life_drain': '生命夺取'
+    'dario_life_drain': '生命夺取',
+    'dario_participation': '我也要点参与感～'
   }
 };
 

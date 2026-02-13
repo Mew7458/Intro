@@ -4281,11 +4281,7 @@ const skillLibrary = {
   ]
 };
 
-const stageSkillExclusions = {
-  sevenSeas: {
-    adora: ['adora_blackflash_charge'],
-  },
-};
+const stageSkillExclusions = {};
 
 function getAvailableSkillsForStage(stageId, characterId) {
   const skills = skillLibrary[characterId] || [];

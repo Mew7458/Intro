@@ -2879,6 +2879,89 @@ async function officer_ComboSlash(u, target){
 // —— 技能池/抽牌（含调整：Katz/Nelya/Kyn 技能）；移动卡统一蓝色 —— 
 function skill(name,cost,color,desc,rangeFn,execFn,estimate={},meta={}){ return {name,cost,color,desc,rangeFn,execFn,estimate,meta}; }
 
+
+// Helper function to load selected skills from localStorage
+function loadSelectedSkillsForBattle() {
+  try {
+    const saved = localStorage.getItem('gwdemo_selected_skills');
+    return saved ? JSON.parse(saved) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Helper function to check if skill selection should be applied (level 50+)
+function shouldApplySkillSelection(u) {
+  return u && u.level >= 50;
+}
+
+// Skill key mapping from skill library to battle script
+const skillKeyMapping = {
+  adora: {
+    'adora_dagger': '短匕轻挥',
+    'adora_gun': '枪击',
+    'adora_dont_approach': '呀！你不要靠近我呀！！',
+    'adora_stun_device': '自制粉色迷你电击装置',
+    'adora_medical': '略懂的医术！',
+    'adora_cheer': '加油哇！',
+    'adora_rely': '只能靠你了。。',
+    'adora_bloom': '绽放（红色）',
+    'adora_assassination_1': '课本知识：刺杀一',
+    'adora_blackflash_charge': '黑瞬「充能」'
+  },
+  karma: {
+    'karma_punch': '沙包大的拳头',
+    'karma_gun': '枪击',
+    'karma_listen': '都听你的',
+    'karma_blood_grip': '嗜血之握',
+    'karma_deep_breath': '深呼吸',
+    'karma_adrenaline': '肾上腺素',
+    'karma_charge': '蓄力',
+    'karma_cataclysm': '天崩地裂'
+  },
+  dario: {
+    'dario_claw': '机械爪击',
+    'dario_gun': '枪击',
+    'dario_swift': '迅捷步伐',
+    'dario_pull': '拿来吧你！',
+    'dario_bitter_sweet': '先苦后甜',
+    'dario_tear_wound': '撕裂伤口',
+    'dario_status_recovery': '状态恢复',
+    'dario_life_drain': '生命夺取',
+    'dario_participation': '我也要点参与感～'
+  }
+};
+
+// Helper function to get selected skill keys for filtering
+function getSelectedSkillKeysForUnit(u) {
+  if (!shouldApplySkillSelection(u)) return null;
+
+  const selectedSkills = loadSelectedSkillsForBattle();
+  if (!selectedSkills || !selectedSkills[u.id]) return null;
+
+  const charSelection = selectedSkills[u.id];
+  const mapping = skillKeyMapping[u.id];
+  if (!mapping) return null;
+
+  const selectedKeys = new Set();
+
+  for (const color of ['green', 'blue', 'pink', 'white', 'red', 'purple']) {
+    if (charSelection[color]) {
+      const battleKey = mapping[charSelection[color]];
+      if (battleKey) selectedKeys.add(battleKey);
+    }
+  }
+
+  if (Array.isArray(charSelection.orange)) {
+    for (const skillId of charSelection.orange) {
+      const battleKey = mapping[skillId];
+      if (battleKey) selectedKeys.add(battleKey);
+    }
+  }
+
+  return selectedKeys.size > 0 ? selectedKeys : null;
+}
+
 function hasSkillInPool(u,name){
   return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
 }
@@ -3168,6 +3251,12 @@ function buildSkillFactoriesForUnit(u){
       {aoe:true},
       {castMs:1200}
     )});
+  }
+
+  const selectedKeys = getSelectedSkillKeysForUnit(u);
+  if (selectedKeys) {
+    const filtered = F.filter(factory => selectedKeys.has(factory.key));
+    return filtered;
   }
 
   return F;
