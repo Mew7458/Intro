@@ -2232,7 +2232,8 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   pulseCell(u.r, u.c);
   if(died){ showDeathFx(u); }
   if(source && source.side!==u.side && (finalHp>0 || finalSp>0)){
-    triggerLifeDrainOnHit(source);
+    triggerLifeDrainOnHit(source, u);
+    triggerParticipationOnHit(source, u);
   }
 
   // 反伤姿态：反弹部分HP伤害
@@ -3549,19 +3550,47 @@ function hasSkillInPool(u,name){
   return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
 }
 
-function triggerLifeDrainOnHit(source){
+function triggerLifeDrainOnHit(source, target){
   if(!source || !source.status || !source.side) return;
   const stacks = source.status.lifeDrainStacks || 0;
   if(stacks <= 0) return;
   const allies = Object.values(units).filter(u=>u && u.side===source.side && u.hp>0).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp));
-  const target = allies[0];
-  if(!target) return;
-  const before = target.hp;
-  target.hp = Math.min(target.maxHp, target.hp + 10);
+  const healTarget = allies[0];
+  if(!healTarget) return;
+  const before = healTarget.hp;
+  healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + 10);
   updateStatusStacks(source, 'lifeDrainStacks', Math.max(0, stacks-1), {label:'小生命夺取', type:'buff'});
-  showGainFloat(target, target.hp-before, 0);
-  appendLog(`${source.name} 的“小生命夺取”触发：${target.name} 恢复 ${target.hp-before} HP`);
+  showGainFloat(healTarget, healTarget.hp-before, 0);
+  appendLog(`${source.name} 的“小生命夺取”触发：${healTarget.name} 恢复 ${healTarget.hp-before} HP`);
 }
+function triggerParticipationOnHit(source, target){
+  if(!source || !source.side) return;
+  const dario = Object.values(units).find(u=>u && u.id==='dario' && u.side===source.side && u.hp>0);
+  if(!dario || !hasSkillInPool(dario, '我也要点参与感～')) return;
+  if(dario._participationAssistProc) return;
+  const next = addStatusStacks(dario, 'participationHitCount', 1, {label:'参与计数', type:'buff'});
+  if(next < 2) return;
+  updateStatusStacks(dario, 'participationHitCount', next - 2, {label:'参与计数', type:'buff'});
+  let counterTarget = target && target.hp>0 && target.side!==dario.side ? target : null;
+  if(!counterTarget){
+    counterTarget = Object.values(units).find(u=>u && u.hp>0 && u.side!==dario.side);
+  }
+  if(!counterTarget) return;
+  dario._participationAssistProc = true;
+  try{
+    appendLog(`${dario.name} 的“我也要点参与感～”触发：追击 机械爪击！`);
+    darioClaw(dario, counterTarget);
+  }finally{
+    dario._participationAssistProc = false;
+  }
+}
+
+function darioParticipation(u){
+  const next = addStatusStacks(u, 'participationRepeatStacks', 1, {label:'参与感', type:'buff'});
+  appendLog(`${u.name} 使用 我也要点参与感～：下一次技能攻击会额外重复一次（${next}）`);
+  unitActed(u);
+}
+
 function grantBlackFlashRelease(u){
   if(!u || u.hp<=0) return;
   if((u.skillPool||[]).some(sk=>sk && sk.name==='黑瞬「释放」')) return;
@@ -4117,6 +4146,13 @@ function toggleFullscreen(){
     }).catch(()=>{
       setSimFullscreen(!isSimFullscreen);
     });
+  
+    F.push({ key:'我也要点参与感～', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'我也要点参与感～'), make:()=> skill('我也要点参与感～',2,'white','主动：下一次Dario技能攻击会再重复一次；若此卡在技能池未使用，则友方累计命中敌方2次时Dario追击一次“机械爪击”（全图范围）',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> darioParticipation(uu),
+      {},
+      {castMs:500}
+    )});
   } else {
     setSimFullscreen(!isSimFullscreen);
   }
@@ -4539,6 +4575,26 @@ async function handleSkillConfirmCell(u, sk, aimCell){
       setInteractionLocked(true);
       await result;
       setInteractionLocked(false);
+    }
+
+    if(u.id==='dario' && !u._participationRepeatProc && (u.status && u.status.participationRepeatStacks>0)){
+      const nonAttack = new Set(['迅捷步伐','先苦后甜','状态恢复','生命夺取','我也要点参与感～']);
+      if(!(sk.meta && sk.meta.moveSkill) && !nonAttack.has(sk.name)){
+        u._participationRepeatProc = true;
+        updateStatusStacks(u, 'participationRepeatStacks', Math.max(0, (u.status.participationRepeatStacks||0)-1), {label:'参与感', type:'buff'});
+        appendLog(`${u.name} 的“我也要点参与感～”触发：重复 ${sk.name}`);
+        let result2;
+        if(sk.meta && sk.meta.cellTargeting) result2 = sk.execFn(u, aimCell);
+        else if(sk.estimate && sk.estimate.aoe) result2 = sk.execFn(u, {dir:aimDir});
+        else if(targetUnit) result2 = sk.execFn(u, targetUnit);
+        else result2 = sk.execFn(u, {r:aimCell.r,c:aimCell.c,dir:aimDir});
+        if(result2 instanceof Promise){
+          setInteractionLocked(true);
+          await result2;
+          setInteractionLocked(false);
+        }
+        u._participationRepeatProc = false;
+      }
     }
   }catch(e){ 
     setInteractionLocked(false); // Ensure unlock on error

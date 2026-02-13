@@ -427,6 +427,34 @@ function triggerLifeDrain(source){
     appendLog(`${source.name} 的“小生命夺取”触发：${target.name} 已满血`);
   }
 }
+
+function triggerParticipationOnHit(source, target){
+  if(!source || !source.side) return;
+  const dario = Object.values(units).find(u=>u && normalizeCombatId(u.id)==='dario' && u.side===source.side && u.hp>0);
+  if(!dario || !hasSkillInPool(dario, '我也要点参与感～')) return;
+  if(dario._participationAssistProc) return;
+  const next = addStatusStacks(dario, 'participationHitCount', 1, {label:'参与计数', type:'buff'});
+  if(next < 2) return;
+  updateStatusStacks(dario, 'participationHitCount', next - 2, {label:'参与计数', type:'buff'});
+  let counterTarget = target && target.hp>0 && target.side!==dario.side ? target : null;
+  if(!counterTarget){
+    counterTarget = Object.values(units).find(u=>u && u.hp>0 && u.side!==dario.side);
+  }
+  if(!counterTarget) return;
+  dario._participationAssistProc = true;
+  try{
+    appendLog(`${dario.name} 的“我也要点参与感～”触发：追击 机械爪击！`);
+    darioClaw(dario, counterTarget);
+  }finally{
+    dario._participationAssistProc = false;
+  }
+}
+
+function darioParticipation(u){
+  const next = addStatusStacks(u, 'participationRepeatStacks', 1, {label:'参与感', type:'buff'});
+  appendLog(`${u.name} 使用 我也要点参与感～：下一次技能攻击会额外重复一次（${next}）`);
+  unitActed(u);
+}
 // 玩家1
 units['adora'] = createUnit('adora','Adora','player',70, 7, 3, 100,100, 0.5,0, ['backstab','calmAnalysis','proximityHeal','fearBuff'], {stunThreshold:2});
 units['dario'] = createUnit('dario','Dario','player',70, 4, 4, 150,100, 0.75,0, ['quickAdjust','counter','moraleBoost'], {stunThreshold:2});
@@ -2905,6 +2933,7 @@ if(u._spCrashVuln && (hpDmg>0 || spDmg>0)){
     const src = units[sourceId];
     if(src && src.side !== u.side && totalImpact > 0 && !opts.ignoreLifeDrain){
       triggerLifeDrain(src);
+      triggerParticipationOnHit(src, u);
     }
   }
 
@@ -4469,6 +4498,12 @@ function buildSkillFactoriesForUnit(u){
         (uu)=> darioLifeDrain(uu),
         {},
         {castMs:800}
+      )},
+      { key:'我也要点参与感～', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'我也要点参与感～'), make:()=> skill('我也要点参与感～',2,'white','主动：下一次Dario技能攻击会再重复一次；若此卡在技能池未使用，则友方累计命中敌方2次时Dario追击一次“机械爪击”（全图范围）',
+        (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+        (uu)=> darioParticipation(uu),
+        {},
+        {castMs:500}
       )}
     );
   } else if(baseId==='karma'){
@@ -5335,6 +5370,20 @@ function handleSkillConfirmCell(u, sk, aimCell){
     else if(sk.estimate && sk.estimate.aoe) sk.execFn(u, {dir:aimDir});
     else if(targetUnit) sk.execFn(u, targetUnit);
     else sk.execFn(u, {r:aimCell.r,c:aimCell.c,dir:aimDir});
+
+    if(normalizeCombatId(u.id)==='dario' && !u._participationRepeatProc && (u.status && u.status.participationRepeatStacks>0)){
+      const nonAttack = new Set(['迅捷步伐','先苦后甜','状态恢复','生命夺取','我也要点参与感～']);
+      if(!(sk.meta && sk.meta.moveSkill) && !nonAttack.has(sk.name)){
+        u._participationRepeatProc = true;
+        updateStatusStacks(u, 'participationRepeatStacks', Math.max(0, (u.status.participationRepeatStacks||0)-1), {label:'参与感', type:'buff'});
+        appendLog(`${u.name} 的“我也要点参与感～”触发：重复 ${sk.name}`);
+        if(sk.meta && sk.meta.cellTargeting) sk.execFn(u, aimCell);
+        else if(sk.estimate && sk.estimate.aoe) sk.execFn(u, {dir:aimDir});
+        else if(targetUnit) sk.execFn(u, targetUnit);
+        else sk.execFn(u, {r:aimCell.r,c:aimCell.c,dir:aimDir});
+        u._participationRepeatProc = false;
+      }
+    }
   }catch(e){ console.error('技能执行错误',e); appendLog(`[错误] 技能执行失败：${sk.name} - ${e.message}`); }
 
   consumeCardFromHand(u, sk);
