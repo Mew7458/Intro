@@ -4121,7 +4121,7 @@ function buildSkillFactoriesForUnit(u){
       (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
       (uu)=> adoraBlackFlashCharge(uu),
       {},
-      {castMs:700}
+      {castMs:900}
     )});
   }
   if(u.id==='dario'){
