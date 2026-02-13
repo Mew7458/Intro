@@ -263,6 +263,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       stunned: 0,
       paralyzed: 0,
       bleed: 0,
+      bleedStrength: 0,
+      bleedStrengthQueue: [],
       hazBleedTurns: 0,
       recoverStacks: 0,          // “恢复”Buff 层数（每大回合开始消耗一层，+5HP）
       jixueStacks: 0,            // “鸡血”Buff 层数（下一次攻击伤害x2）
@@ -276,7 +278,8 @@ function createUnit(id, name, side, level, r, c, maxHp, maxSp, restoreOnZeroPct,
       tetanusTick: 0,            // 破伤风计数（每3回合衰减1层破伤风）
       lockedPreyId: null,        // “锁定猎物”目标 id
       blastStacks: 0,            // “爆裂”Debuff 层数（被攻击时引爆）
-      chargeStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
+      chargeStacks: 0,
+      lifeDrainStacks: 0,           // “蓄力”Buff 层数（本回合无法行动，回合开始消耗）
     },
     dmgDone: 0,
     skillPool: [],
@@ -1752,6 +1755,9 @@ function updateStatusStacks(u,key,next,{label,type='buff', offsetY=-72}={}){
   if(diff !== 0){
     showStatusFloat(u,label,{type, delta: diff, offsetY});
   }
+  if(key === 'bleed'){
+    setBleedStacksDirect(u, value);
+  }
   if(key === 'stunned'){
     refreshSpCrashVulnerability(u);
   }
@@ -1761,6 +1767,61 @@ function addStatusStacks(u,key,delta,opts){
   if(!u || !u.status || !delta) return (u && u.status) ? (u.status[key] || 0) : 0;
   const prev = u.status[key] || 0;
   return updateStatusStacks(u,key, prev + delta, opts);
+}
+
+function normalizeBleedState(u){
+  if(!u || !u.status) return;
+  if(!Array.isArray(u.status.bleedStrengthQueue)) u.status.bleedStrengthQueue = [];
+  u.status.bleedStrengthQueue = u.status.bleedStrengthQueue
+    .map(v=>Math.max(1, Math.floor(Number(v)||0)))
+    .filter(v=>v>0);
+  const layerCount = Math.max(0, Math.floor(Number(u.status.bleed)||0));
+  const declaredStrength = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+  let queueSum = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+  if(u.status.bleedStrengthQueue.length < layerCount){
+    const missing = layerCount - u.status.bleedStrengthQueue.length;
+    const remain = Math.max(0, declaredStrength - queueSum);
+    if(remain > 0){
+      let left = remain;
+      for(let i=0; i<missing; i++){
+        const slotsLeft = missing - i;
+        const alloc = (slotsLeft===1) ? left : Math.max(1, Math.floor(left / slotsLeft));
+        u.status.bleedStrengthQueue.push(Math.max(1, alloc));
+        left -= alloc;
+      }
+    }else{
+      for(let i=0; i<missing; i++) u.status.bleedStrengthQueue.push(1);
+    }
+  }
+  if(u.status.bleedStrengthQueue.length > layerCount) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0, layerCount);
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function setBleedStacksDirect(u, layers){
+  if(!u || !u.status) return;
+  const nextLayers = Math.max(0, Math.floor(Number(layers)||0));
+  normalizeBleedState(u);
+  if(nextLayers === 0){
+    u.status.bleed = 0;
+    u.status.bleedStrengthQueue = [];
+    u.status.bleedStrength = 0;
+    return;
+  }
+  if(nextLayers < u.status.bleedStrengthQueue.length) u.status.bleedStrengthQueue = u.status.bleedStrengthQueue.slice(0,nextLayers);
+  while(u.status.bleedStrengthQueue.length < nextLayers) u.status.bleedStrengthQueue.push(1);
+  u.status.bleed = nextLayers;
+  u.status.bleedStrength = u.status.bleedStrengthQueue.reduce((sum,v)=>sum+v,0);
+}
+function addBleed(u, layers=1, strengthPerLayer=1){
+  if(!u || !u.status || layers<=0) return u && u.status ? (u.status.bleed||0) : 0;
+  const addLayers = Math.max(0, Math.floor(Number(layers)||0));
+  const perLayer = Math.max(1, Math.floor(Number(strengthPerLayer)||0));
+  if(addLayers<=0) return u.status.bleed||0;
+  normalizeBleedState(u);
+  for(let i=0;i<addLayers;i++) u.status.bleedStrengthQueue.push(perLayer);
+  u.status.bleed = (u.status.bleed||0) + addLayers;
+  u.status.bleedStrength = (u.status.bleedStrength||0) + addLayers * perLayer;
+  updateStatusStacks(u,'bleed',u.status.bleed,{label:'流血', type:'debuff'});
+  return u.status.bleed;
 }
 function grantKarmaBlastSkill(u){
   if(!u || u.hp<=0) return;
@@ -2476,6 +2537,47 @@ function calcOutgoingDamage(attacker, baseDmg, target, skillName){
   if(attacker.id==='tusk' && (attacker.tuskRageStacks||0)>0){ dmg += 5*attacker.tuskRageStacks; appendLog(`Tusk 猛牛之力：额外 +${5*attacker.tuskRageStacks} 伤害`); attacker.tuskRageStacks = 0; }
   return dmg;
 }
+
+function getBaseArmorForUnit(u){
+  if(!u) return 0;
+  const rawName = String(u.name || '').replace(/（虚影）/g, '').trim();
+  const name = rawName.startsWith('Velmira') ? 'Velmira' : rawName;
+  if(name === 'Adora') return 10 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Dario') return 15 + Math.max(0, (u.level||0) - 20);
+  if(name === 'Karma') return 15 + Math.max(0, (u.level||0) - 20);
+  const fixedArmor = {
+    'Haz': 40,
+    'Katz': 30,
+    'Tusk': 40,
+    'Neyla': 10,
+    'Kyn': 20,
+    '宰': 50,
+    'Velmira': 60,
+    'Khathia': 40,
+    'Lirathe': 50,
+    '刑警队员': 0,
+    '雏形赫雷西成员': 10,
+    '法形赫雷西成员': 10,
+    '刺形赫雷西成员': 10,
+    '赫雷西初代精英成员': 20,
+    '组装型进阶赫雷西成员（赫雷西成员B）': 30,
+  };
+  return fixedArmor[name] ?? 0;
+}
+function getLevelArmorBonus(u){
+  if(!u || !u.side) return 0;
+  const myTeam = Object.values(units).filter(x=>x && x.side===u.side && x.hp>0);
+  const oppTeam = Object.values(units).filter(x=>x && x.side!==u.side && x.hp>0);
+  if(myTeam.length===0 || oppTeam.length===0) return 0;
+  const myAvg = Math.floor(myTeam.reduce((s,x)=>s+(x.level||0),0) / myTeam.length);
+  const oppAvg = Math.floor(oppTeam.reduce((s,x)=>s+(x.level||0),0) / oppTeam.length);
+  if(myAvg <= oppAvg) return 0;
+  return Math.max(0, (u.level||0) - oppAvg) * 5;
+}
+function getTotalArmorForUnit(u){
+  return Math.max(0, getBaseArmorForUnit(u) + getLevelArmorBonus(u));
+}
+
 function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const u = units[id]; if(!u || u.hp<=0) return;
 
@@ -2653,6 +2755,12 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
   const prevHp = u.hp;
   let finalHp = Math.max(0, hpDmg);
   let finalSp = Math.max(0, spDmg);
+  if(!trueDamage && finalHp > 0){
+    const armor = getTotalArmorForUnit(u);
+    if(armor > 0){
+      finalHp = Math.max(0, Math.round(finalHp * 100 / (100 + armor)));
+    }
+  }
 
   const isZai = (u.id === 'zai');
 
@@ -2805,9 +2913,7 @@ function damageUnit(id, hpDmg, spDmg, reason, sourceId=null, opts={}){
     if(src && src.side === "player" && (finalHp>0 || finalSp>0)){
       const equipped = loadEquippedAccessories();
       if(equipped[src.id] === "tetanus"){
-        const currentBleed = u.status.bleed || 0;
-        u.status.bleed = currentBleed + 1;
-        updateStatusStacks(u, "bleed", u.status.bleed, { label: "流血", type: "debuff" });
+        addBleed(u, 1, 1);
           addStatusStacks(u, "resentStacks", 1, { label: "怨念", type: "debuff" });
         appendLog(`${src.name} 的"破伤风之刃"：${u.name} +1 流血 +1 怨念`);
       }
@@ -3049,7 +3155,7 @@ function darioTearWound(u, target){
   u.dmgDone += finalDmg;
 
   const bleedStacks = isFullHp ? 1 : 2;
-  addStatusStacks(target, 'bleed', bleedStacks, {label:'流血', type:'debuff'});
+  addBleed(target, bleedStacks, 1);
   appendLog(`${target.name} 附加 流血+${bleedStacks}`);
 
   setTimeout(() => {
@@ -3067,7 +3173,7 @@ function darioStatusRecovery(u, aim){
   const clearedEffects = [];
   if(t.status.stunned > 0){ clearedEffects.push('眩晕'); t.status.stunned = 0; }
   if(t.status.paralyzed > 0){ clearedEffects.push('恐惧'); t.status.paralyzed = 0; }
-  if(t.status.bleed > 0){ clearedEffects.push('流血'); t.status.bleed = 0; }
+  if(t.status.bleed > 0){ clearedEffects.push('流血'); setBleedStacksDirect(t, 0); }
   if(t.status.hazBleedTurns > 0){ clearedEffects.push('Haz流血'); t.status.hazBleedTurns = 0; }
 
   const spBefore = t.sp;
@@ -3128,7 +3234,7 @@ async function adoraAssassination(u, target){
     const dmg2 = calcOutgoingDamage(u, 5, target, '课本知识：刺杀一');
     damageUnit(target.id, dmg2, 5, `${u.name} 拔出匕首 ${target.name}`, u.id, {skillFx:'adora:课本知识：刺杀一'});
     u.dmgDone += dmg2;
-    const bleedStacks = addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'});
+    const bleedStacks = addBleed(target, 1, 1);
     appendLog(`${target.name} 流血层数 -> ${bleedStacks}`);
   }
   
@@ -3555,8 +3661,8 @@ async function haz_GodFork(u, target){
   cameraFocusOnCell(target.r, target.c);
   damageUnit(target.id, dmg, 15, `${u.name} 猎神之叉 重击 ${target.name}`, u.id,{skillFx:'haz:猎神之叉'});
   const bleedStacks = Math.max(target.status.bleed||0, 2);
-  updateStatusStacks(target,'bleed', bleedStacks,{label:'流血', type:'debuff'});
-  appendLog(`${target.name} 附加流血（2回合，每回合 -5%最大HP）`);
+  addBleed(target, 1, 1);
+  appendLog(`${target.name} 附加流血（当前规则：每回合消耗1层，本层强度×5HP）`);
   if(!hazMarkedTargetId){ hazMarkedTargetId = target.id; appendLog(`猎杀标记：${target.name} 被标记，七海对其伤害 +15%`); }
   u.dmgDone += dmg; unitActed(u);
 }
@@ -3839,7 +3945,7 @@ async function neyla_PierceSnipe(u, desc){
     if(tu && tu.side!==u.side && !set.has(tu.id)){
       damageUnit(tu.id,30,0,`${u.name} 穿刺狙击 命中 ${tu.name}`, u.id,{ignoreCover:true, skillFx:'neyla:穿刺狙击'});
       const bleedNext = Math.max(tu.status.bleed||0, 2);
-      updateStatusStacks(tu,'bleed', bleedNext,{label:'流血', type:'debuff'});
+      addBleed(tu, 1, 1);
       set.add(tu.id); hits++;
     }
   }
@@ -4040,7 +4146,7 @@ async function zai_CatchMe(u, target){
   const dmg3 = calcOutgoingDamage(u, 25, target, '他妈来抓老子啊');
   damageUnit(target.id, dmg3, 5, `${u.name} 他妈来抓老子啊·上斩`, u.id);
   u.dmgDone += dmg3;
-  addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'});
+  addBleed(target, 1, 1);
   await sleep(180);
 
   // 4) below
@@ -4110,7 +4216,7 @@ async function zai_CleavingFrenzy(u, payload){
   };
 
   // 1) 刺击：10HP +5SP +1流血
-  if(!await hit(10, 5, '刺击', 'RedCut', ()=> addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'}), 150)){
+  if(!await hit(10, 5, '刺击', 'RedCut', ()=> addBleed(target, 1, 1), 150)){
     unitActed(u);
     return;
   }
@@ -4120,7 +4226,7 @@ async function zai_CleavingFrenzy(u, payload){
     return;
   }
   // 3) 连斩二：15HP +0SP +1流血
-  if(!await hit(15, 0, '连斩二', (Math.random()<0.5?'BloodSlash':'RedCut'), ()=> addStatusStacks(target, 'bleed', 1, {label:'流血', type:'debuff'}), 150)){
+  if(!await hit(15, 0, '连斩二', (Math.random()<0.5?'BloodSlash':'RedCut'), ()=> addBleed(target, 1, 1), 150)){
     unitActed(u);
     return;
   }
@@ -4308,7 +4414,7 @@ async function zai_BloodStar(u){
     // no camera shake here; only final hit should shake (per request)
     await stepHit(15, 1, '非正式血星鬼斩裂·连斩', {floor10:true, shake:false, fxName: fx});
 
-    if(i % 3 === 0){ for(const t of getEnemies()) addStatusStacks(t, 'bleed', 1, {label:'流血', type:'debuff'}); }
+    if(i % 3 === 0){ for(const t of getEnemies()) addBleed(t, 1, 1); }
     if(i % 5 === 0){ for(const t of getEnemies()) zaiApplyTetanus(t, 1); }
     if(i % 10 === 0){ for(const t of getEnemies()) zaiApplyPainAmp(t, 1); }
 
@@ -4333,7 +4439,7 @@ async function zai_BloodStar(u){
       starChain = starChain.then(async () => {
         await stepHit(35, 5, '非正式血星鬼斩裂·五角星', {floor10:true, shake:false});
         for(const t of getEnemies()){
-          addStatusStacks(t, 'bleed', 1, {label:'流血', type:'debuff'});
+          addBleed(t, 1, 1);
           zaiApplyTetanus(t, 1);
         }
         await sleep(40);
@@ -4354,7 +4460,7 @@ async function zai_BloodStar(u){
           const actualHp = (res && typeof res.hp === 'number') ? res.hp : 0;
           finalHits.push({t, hp: actualHp});
           u.dmgDone += actualHp;
-          addStatusStacks(t, 'bleed', 5, {label:'流血', type:'debuff'});
+          addBleed(t, 5, 1);
           zaiApplyTetanus(t, 1);
           zaiApplyPainAmp(t, 1);
         }
@@ -4587,7 +4693,7 @@ function zaiApplyBitePenalty(zai){
     ignoreDepend: true,
     ignoreTuskWall: true,
   });
-  addStatusStacks(zai, 'bleed', 5, {label:'流血', type:'debuff'});
+  addBleed(zai, 5, 1);
   renderAll();
 }
 async function zai_BrutalBite(zai){
@@ -4632,7 +4738,7 @@ async function zai_BrutalBite(zai){
   syncSpBroken(target);
   showDamageFloat(target, 0, spLoss, {trueDamage:true});
   appendLog(`${target.name} 的 SP 被清空！`);
-  addStatusStacks(target, 'bleed', 5, {label:'流血', type:'debuff'});
+  addBleed(target, 5, 1);
 
   zai._biteHitThisTurn = true;
 
@@ -4936,6 +5042,106 @@ function getSelectedSkillKeysForUnit(u) {
   return selectedKeys.size > 0 ? selectedKeys : null;
 }
 
+
+function hasSkillInPool(u,name){
+  return !!((u && u.skillPool || []).some(sk=>sk && sk.name===name));
+}
+
+function triggerLifeDrainOnHit(source, target){
+  if(!source || !source.status || !source.side) return;
+  const stacks = source.status.lifeDrainStacks || 0;
+  if(stacks <= 0) return;
+  const allies = Object.values(units).filter(u=>u && u.side===source.side && u.hp>0).sort((a,b)=>(a.hp/a.maxHp)-(b.hp/b.maxHp));
+  const healTarget = allies[0];
+  if(!healTarget) return;
+  const before = healTarget.hp;
+  healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + 10);
+  updateStatusStacks(source, 'lifeDrainStacks', Math.max(0, stacks-1), {label:'小生命夺取', type:'buff'});
+  showGainFloat(healTarget, healTarget.hp-before, 0);
+  appendLog(`${source.name} 的“小生命夺取”触发：${healTarget.name} 恢复 ${healTarget.hp-before} HP`);
+}
+function triggerParticipationOnHit(source, target){
+  if(!source || !source.side) return;
+  const dario = Object.values(units).find(u=>u && u.id==='dario' && u.side===source.side && u.hp>0);
+  if(!dario || !hasSkillInPool(dario, '我也要点参与感～')) return;
+  if(dario._participationAssistProc) return;
+  const next = addStatusStacks(dario, 'participationHitCount', 1, {label:'参与计数', type:'buff'});
+  if(next < 2) return;
+  updateStatusStacks(dario, 'participationHitCount', next - 2, {label:'参与计数', type:'buff'});
+  let counterTarget = target && target.hp>0 && target.side!==dario.side ? target : null;
+  if(!counterTarget){
+    counterTarget = Object.values(units).find(u=>u && u.hp>0 && u.side!==dario.side);
+  }
+  if(!counterTarget) return;
+  dario._participationAssistProc = true;
+  try{
+    appendLog(`${dario.name} 的“我也要点参与感～”触发：追击 机械爪击！`);
+    darioClaw(dario, counterTarget);
+  }finally{
+    dario._participationAssistProc = false;
+  }
+}
+
+function darioParticipation(u){
+  const next = addStatusStacks(u, 'participationRepeatStacks', 1, {label:'参与感', type:'buff'});
+  appendLog(`${u.name} 使用 我也要点参与感～：下一次技能攻击会额外重复一次（${next}）`);
+  unitActed(u);
+}
+
+function grantBlackFlashRelease(u){
+  if(!u || u.hp<=0) return;
+  if((u.skillPool||[]).some(sk=>sk && sk.name==='黑瞬「释放」')) return;
+  const release = skill('黑瞬「释放」', 1, 'purple', '对所有敌方单位造成 15 SP 伤害（不受掩体）',
+    (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+    (uu)=>{
+      const enemies = Object.values(units).filter(t=>t.side!==uu.side && t.hp>0);
+      if(enemies.length===0){ appendLog('黑瞬「释放」：场上没有敌方单位'); unitActed(uu); return; }
+      for(const t of enemies){ damageUnit(t.id, 0, 15, `${uu.name} 黑瞬「释放」命中 ${t.name}`, uu.id, {ignoreCover:true}); }
+      appendLog(`${uu.name} 使用 黑瞬「释放」：敌方单位 SP 受损`);
+      unitActed(uu);
+    },
+    {aoe:true},
+    {castMs:700, extraSkill:true}
+  );
+  u.skillPool = u.skillPool || [];
+  u.skillPool.push(release);
+  appendLog(`${u.name} 获得额外技能：黑瞬「释放」`);
+}
+function adoraBlackFlashCharge(u){
+  grantBlackFlashRelease(u);
+  appendLog(`${u.name} 使用 黑瞬「充能」`);
+  unitActed(u);
+}
+function darioLifeDrain(u){
+  const next = addStatusStacks(u, 'lifeDrainStacks', 1, {label:'小生命夺取', type:'buff'});
+  appendLog(`${u.name} 使用 生命夺取：获得 小生命夺取（${next}）`);
+  unitActed(u);
+}
+async function karmaCataclysm(u){
+  const cells = inRadiusCells(u,2,{allowOccupied:true});
+  const targets = [];
+  const seen = new Set();
+  for(const c of cells){
+    const t = getUnitAt(c.r,c.c);
+    if(!t || t.hp<=0 || seen.has(t.id)) continue;
+    seen.add(t.id);
+    targets.push(t);
+  }
+  if(targets.length===0){ appendLog('天崩地裂：范围内没有目标'); unitActed(u); return; }
+  await telegraphThenImpact(cells);
+  appendLog(`${u.name} 使用 天崩地裂`);
+  for(const t of targets){
+    if(t.side===u.side){
+      damageUnit(t.id, 10, 5, `${u.name} 天崩地裂 波及 ${t.name}`, u.id);
+    }else{
+      const adjacent = mdist(u,t) <= 1;
+      const hpDmg = adjacent ? 30 : 25;
+      damageUnit(t.id, hpDmg, 10, `${u.name} 天崩地裂 命中 ${t.name}`, u.id);
+    }
+  }
+  unitActed(u);
+}
+
 function buildSkillFactoriesForUnit(u){
   const F=[];
   if(u.id==='adora'){
@@ -5234,7 +5440,7 @@ function buildSkillFactoriesForUnit(u){
         )},
         { key:'怨念滋生', prob:0.33, cond:()=>true, make:()=> skill('怨念滋生',1,'green','全图：对被猎杀标记目标 施加1流血+1恐惧',
           (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
-        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addStatusStacks(t,'bleed',1,{label:'流血', type:'debuff'}); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血 与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
+        (uu)=> { if(!hazMarkedTargetId){ appendLog('怨念滋生：没有被标记的目标'); unitActed(uu); return; } const t=units[hazMarkedTargetId]; if(!t||t.hp<=0){ appendLog('怨念滋生：标记目标不存在或已倒下'); unitActed(uu); return; } addTempClassToCells([{r:t.r,c:t.c}],'highlight-tele',TELEGRAPH_MS); setTimeout(()=>{ addBleed(t, 1, 1); addStatusStacks(t,'paralyzed',1,{label:'恐惧', type:'debuff'}); showSkillFx('haz:怨念滋生',{target:t}); appendLog(`${uu.name} 怨念滋生：对 ${t.name} 施加 1层流血 与 1层恐惧`); }, TELEGRAPH_MS); unitActed(uu); },
           {},
           {castMs:800}
         )},
@@ -5408,6 +5614,32 @@ function buildSkillFactoriesForUnit(u){
     }
   }
   
+
+  if(u.id==='adora'){
+    F.push({ key:'黑瞬「充能」', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'黑瞬「释放」'), make:()=> skill('黑瞬「充能」',2,'purple','获得额外技能“黑瞬「释放」”',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> adoraBlackFlashCharge(uu),
+      {},
+      {castMs:700}
+    )});
+  }
+  if(u.id==='dario'){
+    F.push({ key:'生命夺取', prob:0.35, cond:()=>true, make:()=> skill('生命夺取',0,'pink','获得 1 层“小生命夺取”：下一次攻击治疗血量最少的友方 10HP',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> darioLifeDrain(uu),
+      {},
+      {castMs:500}
+    )});
+  }
+  if(u.id==='karma'){
+    F.push({ key:'天崩地裂', prob:0.15, cond:()=>u.level>=50, make:()=> skill('天崩地裂',3,'red','周围2格内所有单位受击：友方 10HP+5SP，敌方 25HP+10SP（相邻再+5HP）',
+      (uu)=> inRadiusCells(uu,2,{allowOccupied:true}),
+      (uu)=> karmaCataclysm(uu),
+      {aoe:true},
+      {castMs:1200}
+    )});
+  }
+
   // Filter skills based on selection if character is level 50+
   const selectedKeys = getSelectedSkillKeysForUnit(u);
   if (selectedKeys) {
@@ -5561,6 +5793,13 @@ function toggleFullscreen(){
     }).catch(()=>{
       setSimFullscreen(!isSimFullscreen);
     });
+  
+    F.push({ key:'我也要点参与感～', prob:0.20, cond:()=>u.level>=50 && !hasSkillInPool(u,'我也要点参与感～'), make:()=> skill('我也要点参与感～',2,'white','主动：下一次Dario技能攻击会再重复一次；若此卡在技能池未使用，则友方累计命中敌方2次时Dario追击一次“机械爪击”（全图范围）',
+      (uu)=>[{r:uu.r,c:uu.c,dir:uu.facing}],
+      (uu)=> darioParticipation(uu),
+      {},
+      {castMs:500}
+    )});
   } else {
     setSimFullscreen(!isSimFullscreen);
   }
@@ -5789,7 +6028,7 @@ function summarizeNegatives(u){
   if(u._staggerStacks && (u.stunThreshold||1)>1) parts.push(`叠层${u._staggerStacks}/${u.stunThreshold}`);
   if(u.status.stunned>0) parts.push(`眩晕x${u.status.stunned}`);
   if(u.status.paralyzed>0) parts.push(`恐惧x${u.status.paralyzed}`);
-  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}`);
+  if(u.status.bleed>0) parts.push(`流血x${u.status.bleed}(强度${u.status.bleedStrength||0})`);
   if(u.status.hazBleedTurns>0) parts.push(`Haz流血x${u.status.hazBleedTurns}`);
   if(u.status.bloodyBud>0) parts.push(`血色花蕾x${u.status.bloodyBud}`);
   if(u.status.recoverStacks>0) parts.push(`恢复x${u.status.recoverStacks}`);
@@ -6010,6 +6249,23 @@ function handleSkillConfirmCell(u, sk, aimCell){
         const ms = Math.max(0, TELEGRAPH_MS, (sk.meta && sk.meta.castMs) ? sk.meta.castMs : 0);
         if(ms > 0) await sleep(ms + 40);
       }
+
+      if(u.id==='dario' && !u._participationRepeatProc && (u.status && u.status.participationRepeatStacks>0)){
+        const nonAttack = new Set(['迅捷步伐','先苦后甜','状态恢复','生命夺取','我也要点参与感～']);
+        if(!(sk.meta && sk.meta.moveSkill) && !nonAttack.has(sk.name)){
+          u._participationRepeatProc = true;
+          updateStatusStacks(u, 'participationRepeatStacks', Math.max(0, (u.status.participationRepeatStacks||0)-1), {label:'参与感', type:'buff'});
+          appendLog(`${u.name} 的“我也要点参与感～”触发：重复 ${sk.name}`);
+          let ret2;
+          if(isMoveSkill) ret2 = sk.execFn(u, {moveTo: aimCell});
+          else if(isCellTargeting) ret2 = sk.execFn(u, aimCell);
+          else if(sk.estimate && sk.estimate.aoe) ret2 = sk.execFn(u, {dir:aimDir});
+          else if(targetUnit) ret2 = sk.execFn(u, targetUnit);
+          else ret2 = sk.execFn(u, {r:aimCell.r,c:aimCell.c,dir:aimDir});
+          if(ret2 && typeof ret2.then === 'function') await ret2;
+          u._participationRepeatProc = false;
+        }
+      }
     }catch(e){
       console.error('技能执行错误',e);
       appendLog(`[错误] 技能执行失败：${sk.name} - ${e.message}`);
@@ -6226,6 +6482,11 @@ function applyAccessoryEffects(u, side) {
     }
   }
   
+  if(source && source.side!==u.side && (finalHp>0 || finalSp>0)){
+    triggerLifeDrainOnHit(source, u);
+    triggerParticipationOnHit(source, u);
+  }
+
   if (accessoryId === "tutorial") {
     const beforeSp = u.sp;
     u.sp = Math.min(u.maxSp, u.sp + 10);
@@ -6391,14 +6652,21 @@ function processUnitsTurnStart(side){
         appendLog(`破伤风使 ${u.name} 的痛觉放大减少 1 层`);
       }
     }
-    // Bleed（流血）：每层=1回合，回合开始失去 5% 最大HP
+    // Bleed（流血）：每回合消耗1层，按本层强度造成伤害（每点强度=5HP）
     if(u.status){
       // 兼容旧字段 bleedStacks
       if(u.status.bleedStacks && !u.status.bleed) u.status.bleed = u.status.bleedStacks;
       if(u.status.bleed && u.status.bleed>0){
-        const dmg = Math.floor(u.maxHp*0.05);
-        damageUnit(u.id, dmg, 0, `流血：${u.name} 回合开始失血`, null, {trueDamage:true, hideFx:true});
-        u.status.bleed -= 1;
+        normalizeBleedState(u);
+        const bleedStrengthBefore = Math.max(0, Math.floor(Number(u.status.bleedStrength)||0));
+        const dmg = Math.max(0, bleedStrengthBefore * 5);
+        if(dmg > 0){
+          damageUnit(u.id, dmg, 0, `流血：${u.name} 回合开始失血（流血强度${bleedStrengthBefore}）`, null, {trueDamage:true, hideFx:true});
+        }
+        if(Array.isArray(u.status.bleedStrengthQueue) && u.status.bleedStrengthQueue.length>0) u.status.bleedStrengthQueue.shift();
+        const bleedLayersAfter = Math.max(0, (u.status.bleed||0) - 1);
+        updateStatusStacks(u, 'bleed', bleedLayersAfter, {label:'流血', type:'debuff'});
+        u.status.bleedStrength = (u.status.bleedStrengthQueue||[]).reduce((sum,v)=>sum+v,0);
         if(u.status.bleed<=0){ delete u.status.bleed; delete u.status.bleedStacks; appendLog(`${u.name} 的流血结束`); }
       }
     }
