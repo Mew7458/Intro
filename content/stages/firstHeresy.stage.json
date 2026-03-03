@@ -1,0 +1,6 @@
+{
+  "id": "firstHeresy",
+  "name": "初见赫雷西",
+  "subtitle": "走入异端者领域",
+  "legacy": { "html": "heresy-battle.html" }
+}
