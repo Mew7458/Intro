@@ -1,0 +1,6 @@
+{
+  "id": "intro",
+  "name": "Intro",
+  "subtitle": "基础战斗演练",
+  "legacy": { "html": "intro-battle.html" }
+}

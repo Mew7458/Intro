@@ -1,0 +1,6 @@
+{
+  "id": "bloodTowerPlan",
+  "name": "血楼计划",
+  "subtitle": "穿越污染核心地带",
+  "legacy": { "html": "blood-tower-battle.html" }
+}

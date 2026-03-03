@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Battle - GOD'S WILL Demo</title>
+  <link rel="stylesheet" href="battle.css" />
+</head>
+<body>
+  <main class="battle-shell">
+    <header class="battle-shell-header">
+      <button class="back-btn" type="button" data-action="return-menu">返回主菜单</button>
+      <div class="stage-meta">
+        <h1 id="stage-name">加载中...</h1>
+        <p id="stage-subtitle"></p>
+      </div>
+      <span id="battle-status" class="battle-status"></span>
+    </header>
+
+    <section class="battle-shell-body">
+      <iframe id="battle-frame" title="battle" loading="eager" allow="autoplay; fullscreen"></iframe>
+    </section>
+  </main>
+
+  <script src="../engine/stage-loader.js" defer></script>
+  <script src="../engine/battle-runtime.js" defer></script>
+</body>
+</html>

@@ -3987,35 +3987,43 @@ function finishStageStory(skipped = false) {
 
   setTimeout(() => {
     markStageVisited(stageId, { showRepeat: skipped });
+
+    const enterUnifiedBattle = () => {
+      window.location.href = `./scenes/battle.html?stageId=${encodeURIComponent(stageId)}`;
+    };
     
     // Redirect to intro battle after intro story (even if skipped)
     if (stageId === 'intro') {
       setTimeout(() => {
-        window.location.href = './intro-battle.html';
+        enterUnifiedBattle();
       }, 500);
     }
     
     // Redirect to boss battle after sevenSeas story (even if skipped)
     if (stageId === 'sevenSeas') {
       setTimeout(() => {
-        window.location.href = './7seaboss-battle.html';
+        enterUnifiedBattle();
       }, 500);
     }
     
     // Redirect to heresy battle after firstHeresy story (even if skipped)
     if (stageId === 'firstHeresy') {
       setTimeout(() => {
-        window.location.href = './heresy-battle.html';
+        enterUnifiedBattle();
       }, 500);
     }
     
     // Redirect to blood tower battle after bloodTowerPlan story (even if skipped)
     if (stageId === 'bloodTowerPlan') {
       setTimeout(() => {
-        window.location.href = './blood-tower-battle.html';
+        enterUnifiedBattle();
       }, 500);
     }
   }, 450);
+}
+
+function enterStageBattle(stageId) {
+  window.location.href = `./scenes/battle.html?stageId=${encodeURIComponent(stageId)}`;
 }
 
 function renderStage(stageId) {
@@ -4151,25 +4159,22 @@ function initStageBoard() {
   if (enterBtn) {
     enterBtn.addEventListener('click', () => {
       if (currentStageId === 'abandonedAnimals') {
-        // Navigate to Velmira Boss battle
-        window.location.href = 'velmira-boss-battle.html';
+        enterStageBattle(currentStageId);
         return;
       }
 
       if (currentStageId === 'fatigue') {
-        // Navigate to Khathia Boss battle
-        window.location.href = 'khathia-boss-battle.html';
+        enterStageBattle(currentStageId);
         return;
       }
 
       if (currentStageId === 'oldLove') {
-        // Navigate to Lirathe Boss battle
-        window.location.href = 'lirathe-boss-battle.html';
+        enterStageBattle(currentStageId);
         return;
       }
 
       if (currentStageId === 'zaiBattle') {
-        window.location.href = 'Zai-Battle.html';
+        enterStageBattle(currentStageId);
         return;
       }
 
