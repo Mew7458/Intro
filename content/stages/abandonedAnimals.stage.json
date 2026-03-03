@@ -1,0 +1,6 @@
+{
+  "id": "abandonedAnimals",
+  "name": "被遗弃的动物",
+  "subtitle": "追猎维尔米拉",
+  "legacy": { "html": "velmira-boss-battle.html" }
+}
