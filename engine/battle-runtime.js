@@ -8,6 +8,11 @@ function bindReturnButton() {
   });
 }
 
+function updateStatus(text = '') {
+  const status = document.getElementById('battle-status');
+  if (status) status.textContent = text;
+}
+
 function setBattleFrameSource(stage) {
   const frame = document.getElementById('battle-frame');
   if (!frame) throw new Error('battle-frame not found');
@@ -16,6 +21,12 @@ function setBattleFrameSource(stage) {
   if (!legacyPath) {
     throw new Error(`Stage ${stage?.id || 'unknown'} is missing legacy html mapping`);
   }
+
+  frame.onload = () => updateStatus('');
+  frame.onerror = () => {
+    updateStatus('战斗页面加载失败，正在尝试直接进入。');
+    window.location.href = `../${legacyPath}`;
+  };
 
   frame.src = `../${legacyPath}`;
 }
@@ -31,6 +42,7 @@ function renderStageHead(stage) {
 
 async function bootstrap() {
   bindReturnButton();
+  updateStatus('正在载入关卡...');
 
   const stageId = resolveStageId();
   const stage = await loadStageConfig(stageId);
@@ -40,8 +52,5 @@ async function bootstrap() {
 
 bootstrap().catch((error) => {
   console.error(error);
-  const status = document.getElementById('battle-status');
-  if (status) {
-    status.textContent = '关卡加载失败，请返回菜单重试。';
-  }
+  updateStatus('关卡加载失败，请返回菜单重试。');
 });
