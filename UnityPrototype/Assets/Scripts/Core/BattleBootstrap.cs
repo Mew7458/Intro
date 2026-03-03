@@ -1,5 +1,6 @@
 using System.Collections;
 using Intro.UnityPrototype.AI;
+using Intro.UnityPrototype.UI;
 using Intro.UnityPrototype.Units;
 using UnityEngine;
 
@@ -7,8 +8,16 @@ namespace Intro.UnityPrototype.Core
 {
     public class BattleBootstrap : MonoBehaviour
     {
+        [Header("Core")]
+        [SerializeField] private GridBoard board;
         [SerializeField] private TurnController turnController;
         [SerializeField] private EnemyAIController enemyAI;
+        [SerializeField] private PlayerInputController playerInput;
+        [SerializeField] private BattleHudController hud;
+
+        [Header("Optional Views")]
+        [SerializeField] private UnitView playerView;
+        [SerializeField] private UnitView enemyView;
 
         private UnitModel karma;
         private UnitModel lirathe;
@@ -19,10 +28,23 @@ namespace Intro.UnityPrototype.Core
             lirathe = new UnitModel("lirathe", "Lirathe", BattleSide.Enemy, new Vector2Int(4, 4), 700, 80);
 
             enemyAI.Setup(lirathe, karma);
+            playerInput.Setup(karma, lirathe);
+            hud?.Setup(playerInput, karma, lirathe);
+
+            if (playerView != null) playerView.Bind(karma, board.GridToWorld);
+            if (enemyView != null) enemyView.Bind(lirathe, board.GridToWorld);
+
             turnController.OnTurnChanged += HandleTurnChanged;
             turnController.StartBattle();
+            Debug.Log("Battle started. Player turn. Controls: WASD move, Space attack.");
+        }
 
-            Debug.Log("Battle started. Player turn.");
+        private void OnDestroy()
+        {
+            if (turnController != null)
+            {
+                turnController.OnTurnChanged -= HandleTurnChanged;
+            }
         }
 
         private void HandleTurnChanged()
@@ -42,6 +64,8 @@ namespace Intro.UnityPrototype.Core
             {
                 Debug.Log($"Round {turnController.RoundCount + 1}: Player turn. Steps={turnController.PlayerSteps}");
             }
+
+            hud?.Refresh();
         }
 
         private IEnumerator RunEnemyTurn()
@@ -52,9 +76,11 @@ namespace Intro.UnityPrototype.Core
             {
                 Debug.Log("Karma defeated.");
             }
+
+            hud?.Refresh();
         }
 
-        // 临时按钮：给玩家测试回合流转。
+        // 兼容老调试入口
         [ContextMenu("Player End Turn")]
         public void PlayerEndTurn()
         {
@@ -66,18 +92,8 @@ namespace Intro.UnityPrototype.Core
         public void PlayerBasicAttack()
         {
             if (turnController.CurrentSide != BattleSide.Player) return;
-            if (!turnController.TryConsumeStep(BattleSide.Player, 1)) return;
-
-            var dist = Mathf.Abs(karma.GridPosition.x - lirathe.GridPosition.x)
-                       + Mathf.Abs(karma.GridPosition.y - lirathe.GridPosition.y);
-            if (dist != 1)
-            {
-                Debug.Log("Target not adjacent.");
-                return;
-            }
-
-            lirathe.ApplyDamage(30, 10);
-            Debug.Log("Player attacks Lirathe (-30 HP, -10 SP)");
+            playerInput.TryAttack();
+            hud?.Refresh();
         }
     }
 }

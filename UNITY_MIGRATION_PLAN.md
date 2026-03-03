@@ -91,4 +91,4 @@ Assets/
 
 ---
 
-如果你愿意，我下一步可以直接给你一套 **Unity C# 起步代码骨架**（`GridBoard + TurnController + UnitModel + EnemyAIController`），你拷进项目就能跑第一阶段。
+已落地 `UnityPrototype/Assets/Scripts` 的第一阶段可玩骨架；下一步应优先补齐玩家点击交互、技能/状态系统与 Boss 多阶段机制。

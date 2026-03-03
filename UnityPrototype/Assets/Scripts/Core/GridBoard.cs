@@ -33,14 +33,13 @@ namespace Intro.UnityPrototype.Core
         {
             if (!InBounds(cell)) return;
 
-            if (blocked)
-            {
-                blockedCells.Add(cell);
-            }
-            else
-            {
-                blockedCells.Remove(cell);
-            }
+            if (blocked) blockedCells.Add(cell);
+            else blockedCells.Remove(cell);
+        }
+
+        public int Manhattan(Vector2Int a, Vector2Int b)
+        {
+            return Mathf.Abs(a.x - b.x) + Mathf.Abs(a.y - b.y);
         }
 
         public Vector3 GridToWorld(Vector2Int cell)
@@ -61,10 +60,7 @@ namespace Intro.UnityPrototype.Core
             foreach (var dir in dirs)
             {
                 var next = cell + dir;
-                if (IsWalkable(next))
-                {
-                    yield return next;
-                }
+                if (IsWalkable(next)) yield return next;
             }
         }
 

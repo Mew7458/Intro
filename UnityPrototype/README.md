@@ -1,30 +1,41 @@
-# Unity Prototype (MVP Start)
+# Unity Prototype (Playable MVP)
 
-这是一个可直接拷贝进 Unity 项目的**起步代码骨架**，用于把当前网页战斗逻辑逐步迁移到 Unity。
+这是网页战斗迁移到 Unity 的 **可游玩 MVP 原型**。
 
-## 已提供脚本
+## 已实现
 
-- `Assets/Scripts/Units/UnitModel.cs`：单位数据模型（HP/SP/阵营/坐标）。
-- `Assets/Scripts/Core/GridBoard.cs`：网格边界、可行走判定、邻接格获取。
-- `Assets/Scripts/Core/TurnController.cs`：回合切换与步数预算。
-- `Assets/Scripts/AI/EnemyAIController.cs`：基础敌方 AI（靠近并邻接攻击）。
-- `Assets/Scripts/Core/BattleBootstrap.cs`：战斗启动与调试入口。
+- 网格数据：边界、邻接、曼哈顿距离（`GridBoard`）
+- 单位模型：HP/SP/坐标/阵营（`UnitModel`）
+- 回合循环：玩家回合 <-> 敌方回合，步数预算（`TurnController`）
+- 玩家输入：`WASD` 移动、`Space` 攻击（`PlayerInputController`）
+- 敌方 AI：向玩家逼近并在邻接时攻击（`EnemyAIController`）
+- 可选 HUD：回合/步数/双方 HP SP/按钮（`BattleHudController`）
+- 可选单位视图：模型位置跟随网格坐标（`UnitView`）
 
-## 使用方式
+## 在 Unity 中如何游玩
 
-1. 在 Unity 新建空场景。
-2. 创建空物体 `BattleRoot`，挂载：
+1. 新建空场景，创建空物体 `BattleRoot`。
+2. 给 `BattleRoot` 挂以下脚本：
    - `GridBoard`
    - `TurnController`
    - `EnemyAIController`
+   - `PlayerInputController`
    - `BattleBootstrap`
-3. 在 `BattleBootstrap` 中拖拽绑定 `TurnController` 与 `EnemyAIController`。
-4. 在 `EnemyAIController` 中拖拽绑定 `TurnController` 与 `GridBoard`。
-5. 运行后通过 `BattleBootstrap` 的 ContextMenu（Inspector 右上角）测试：
-   - `Player End Turn`
-   - `Player Basic Attack`
+3. （可选）创建 Canvas + Text + Button，并挂 `BattleHudController`。
+4. （可选）创建两个单位 GameObject 挂 `UnitView`（玩家/敌人）。
+5. 在 Inspector 绑定引用：
+   - `EnemyAIController`：`TurnController`、`GridBoard`
+   - `PlayerInputController`：`TurnController`、`GridBoard`
+   - `BattleBootstrap`：`GridBoard`、`TurnController`、`EnemyAIController`、`PlayerInputController`、`BattleHudController`（可空）、`UnitView`（可空）
+   - `BattleHudController`：`TurnController`、按钮和文本组件
+6. 点击 Play：
+   - 玩家回合：`WASD` 移动、`Space` 邻接攻击
+   - 点击 End Turn（或 `BattleBootstrap > Player End Turn`）结束玩家回合
+   - 敌方将自动行动
 
-## 现阶段说明
+## 还没做完（下一阶段）
 
-- 当前是 **MVP 逻辑骨架**，尚未包含完整 UI、技能卡、状态层数系统、Boss 多阶段演出。
-- 目标是先跑通“玩家回合 -> 敌方回合 -> 回合循环”，再逐步接入现有网页规则细节。
+- 点击格子移动/攻击与可视高亮
+- 技能卡、状态系统（眩晕/流血/怨念等）
+- Boss 多阶段机制和演出
+- 音效、剧情弹窗、完整 UI/日志面板

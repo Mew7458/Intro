@@ -15,6 +15,7 @@ namespace Intro.UnityPrototype.Core
         public int EnemySteps { get; private set; }
 
         public event Action OnTurnChanged;
+        public event Action OnStepsChanged;
 
         public void StartBattle()
         {
@@ -22,6 +23,7 @@ namespace Intro.UnityPrototype.Core
             RefreshStepBudget();
             CurrentSide = BattleSide.Player;
             OnTurnChanged?.Invoke();
+            OnStepsChanged?.Invoke();
         }
 
         public int StepsFor(BattleSide side)
@@ -37,11 +39,14 @@ namespace Intro.UnityPrototype.Core
             {
                 if (PlayerSteps < count) return false;
                 PlayerSteps -= count;
-                return true;
+            }
+            else
+            {
+                if (EnemySteps < count) return false;
+                EnemySteps -= count;
             }
 
-            if (EnemySteps < count) return false;
-            EnemySteps -= count;
+            OnStepsChanged?.Invoke();
             return true;
         }
 
@@ -56,6 +61,7 @@ namespace Intro.UnityPrototype.Core
             }
 
             OnTurnChanged?.Invoke();
+            OnStepsChanged?.Invoke();
         }
 
         private void RefreshStepBudget()

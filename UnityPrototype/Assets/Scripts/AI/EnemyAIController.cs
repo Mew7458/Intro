@@ -22,6 +22,12 @@ namespace Intro.UnityPrototype.AI
 
         public IEnumerator ExecuteTurn()
         {
+            if (turnController == null || board == null)
+            {
+                Debug.LogWarning("EnemyAIController 缺少 TurnController 或 GridBoard 引用。", this);
+                yield break;
+            }
+
             if (enemy == null || player == null)
             {
                 Debug.LogWarning("EnemyAIController 未初始化 Setup。", this);
