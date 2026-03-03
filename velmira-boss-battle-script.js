@@ -1994,6 +1994,31 @@ function handleSpCrashIfNeeded(u){
 }
 
 
+// —— SP 伤害函数 ——
+function applySpDamage(target, amount, {sourceId=null, reason=null}={}){
+  if(!target || target.hp<=0) return 0;
+
+  const floor = (typeof target.spFloor === 'number') ? target.spFloor : 0;
+  const reduced = Math.max(0, Math.min(target.sp - floor, amount));
+
+  if(reduced > 0){
+    target.sp = Math.max(floor, target.sp - reduced);
+    syncSpBroken(target);
+    showDamageFloat(target, 0, reduced);
+
+    if(reason){
+      const msg = reason.replace('{delta}', reduced);
+      appendLog(msg);
+    }
+
+    handleSpCrashIfNeeded(target);
+    renderAll();
+  }
+
+  return reduced;
+}
+
+
 // —— 伤害计算 —— 
 function backstabMultiplier(attacker,target){
   const fromBehind = (target.facing === 'right' && attacker.c < target.c) || (target.facing === 'left' && attacker.c > target.c);
